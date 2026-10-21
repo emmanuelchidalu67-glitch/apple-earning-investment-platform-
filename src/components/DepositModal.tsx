@@ -255,20 +255,24 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
                 Quick Amount Select
               </label>
               <div className="grid grid-cols-5 gap-1.5">
-                {quickAmounts.map((amt) => (
-                  <button
-                    key={amt}
-                    type="button"
-                    onClick={() => setDepositAmount(amt.toString())}
-                    className={`py-2 px-1 rounded-xl text-center font-mono text-[10px] font-bold border transition cursor-pointer ${
-                      parsedAmount === amt
-                        ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
-                    }`}
-                  >
-                    ₦{(amt / 1000).toLocaleString()}k
-                  </button>
-                ))}
+                {quickAmounts.map((amt) => {
+                  const usdVal = (amt / usdtRate).toFixed(1);
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setDepositAmount(amt.toString())}
+                      className={`py-1.5 px-0.5 rounded-xl text-center font-mono text-[10px] font-bold border transition cursor-pointer flex flex-col items-center justify-center ${
+                        parsedAmount === amt
+                          ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <span>${usdVal}</span>
+                      <span className="text-[8px] text-slate-400 font-normal">≈ ₦{(amt / 1000).toLocaleString()}k</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -290,9 +294,14 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
               <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-[#071328] border border-sky-500/40 space-y-3">
                 <div className="flex justify-between items-center pb-2 border-b border-slate-800">
                   <span className="text-xs text-slate-400">Transfer Exact Amount:</span>
-                  <span className="text-lg font-black font-mono text-emerald-400">
-                    {formatNaira(nairaToKobo(parsedAmount))}
-                  </span>
+                  <div className="text-right">
+                    <span className="text-lg font-black font-mono text-emerald-400 block">
+                      ${calculatedUsdt} USD
+                    </span>
+                    <span className="text-xs font-mono text-slate-300 block">
+                      ≈ {formatNaira(nairaToKobo(parsedAmount))}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs">
@@ -450,7 +459,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
               <p className="text-xs text-slate-300 mt-1">
                 Your deposit of{' '}
                 <span className="font-mono font-bold text-emerald-400">
-                  {formatNaira(nairaToKobo(parsedAmount))}
+                  ${calculatedUsdt} USD (≈ {formatNaira(nairaToKobo(parsedAmount))})
                 </span>{' '}
                 ({channelType === 'usdt' ? `${calculatedUsdt} USDT BEP-20` : 'Bank Transfer'}) is queued for automated reconciliation.
               </p>

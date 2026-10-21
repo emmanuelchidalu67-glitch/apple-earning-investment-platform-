@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira } from '../utils/formatters';
+import { formatNaira, formatUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import {
   X,
   Gift,
@@ -130,9 +131,13 @@ export const TopUpCodeModal: React.FC<TopUpCodeModalProps> = ({ isOpen, onClose 
                       <p className="font-semibold text-white">{item.title}</p>
                       <p className="text-[10px] text-slate-500">{item.date.slice(0, 10)}</p>
                     </div>
-                    <span className="font-mono font-bold text-emerald-400">
-                      +{formatNaira(item.amountKobo)}
-                    </span>
+                    <DualCurrency
+                      kobo={item.amountKobo}
+                      prefix="+"
+                      align="right"
+                      usdClassName="font-mono font-bold text-emerald-400 text-xs"
+                      nairaClassName="text-[9px] font-mono text-slate-400"
+                    />
                   </div>
                 ))}
               </div>

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Flame } from 'lucide-react';
+import { RotateCw } from 'lucide-react';
 
 interface FloatingLuckySpinButtonProps {
   onOpenLuckyWheel: () => void;
@@ -11,7 +11,7 @@ export const FloatingLuckySpinButton: React.FC<FloatingLuckySpinButtonProps> = (
 }) => {
   const { user } = useApp();
 
-  // Side-docked position: side is 'right' or 'left', y is vertical position (in px)
+  // Side-docked position: strictly side 'right' or 'left', posY is vertical position along the side
   const [side, setSide] = useState<'right' | 'left'>('right');
   const [posY, setPosY] = useState<number>(() => {
     const saved = localStorage.getItem('aci_wheel_y');
@@ -61,7 +61,7 @@ export const FloatingLuckySpinButton: React.FC<FloatingLuckySpinButtonProps> = (
       hasMovedRef.current = true;
     }
 
-    // Check if dragged toward left or right edge
+    // Strictly side moving only: snaps to left or right side, never floating in center
     if (deltaX < window.innerWidth / 2) {
       setSide('left');
     } else {
@@ -100,7 +100,7 @@ export const FloatingLuckySpinButton: React.FC<FloatingLuckySpinButtonProps> = (
       style={{
         position: 'fixed',
         top: `${posY}px`,
-        ...(side === 'right' ? { right: '12px' } : { left: '12px' }),
+        ...(side === 'right' ? { right: '10px' } : { left: '10px' }),
         zIndex: 45,
         touchAction: 'none',
       }}
@@ -110,14 +110,17 @@ export const FloatingLuckySpinButton: React.FC<FloatingLuckySpinButtonProps> = (
       className="cursor-grab active:cursor-grabbing select-none"
       title="Lucky Spin (Side movable - drag up/down)"
     >
-      {/* Small, clean, normal icon without heavy decorations */}
-      <div className="relative w-10 h-10 rounded-full bg-slate-900 border border-sky-400/80 shadow-md flex items-center justify-center hover:bg-slate-800 transition">
-        {/* Simple wheel / spin icon */}
-        <Flame className="w-5 h-5 text-amber-400" />
+      {/* Small, clean button labeled 'Spin' with normal icon */}
+      <div className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/95 border border-sky-400 shadow-lg shadow-black/60 hover:bg-slate-800 transition active:scale-95">
+        {/* Normal spin icon */}
+        <RotateCw className="w-3.5 h-3.5 text-amber-400" />
+        <span className="text-[11px] font-black uppercase tracking-wider text-white">
+          Spin
+        </span>
 
         {/* Small ticket indicator if user has spins */}
         {spinTickets > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-pink-500 text-[9px] font-black text-white flex items-center justify-center">
+          <span className="min-w-[16px] h-4 px-1 rounded-full bg-pink-500 text-[9px] font-black text-white flex items-center justify-center">
             {spinTickets}
           </span>
         )}

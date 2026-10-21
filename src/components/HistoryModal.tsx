@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, formatDate } from '../utils/formatters';
+import { formatNaira, formatUsd, formatDate, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import { TransactionRecord } from '../types';
 import {
   X,
@@ -205,14 +206,15 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 </div>
 
                 <div className="text-right">
-                  <p
-                    className={`text-xs font-black font-mono ${
+                  <DualCurrency
+                    kobo={tx.amountKobo}
+                    prefix={isPositiveFlow(tx.type) ? '+' : '-'}
+                    align="right"
+                    usdClassName={`text-xs font-black font-mono ${
                       isPositiveFlow(tx.type) ? 'text-emerald-400' : 'text-slate-200'
                     }`}
-                  >
-                    {isPositiveFlow(tx.type) ? '+' : '-'}
-                    {formatNaira(tx.amountKobo)}
-                  </p>
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                   <div className="mt-1">{getStatusBadge(tx.status)}</div>
                 </div>
               </div>
@@ -237,11 +239,14 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 </button>
               </div>
 
-              <div className="text-center py-2">
+              <div className="text-center py-2 space-y-1">
                 <p className="text-xs text-slate-400 uppercase font-semibold">Transaction Amount</p>
-                <p className="text-2xl font-black font-mono text-white mt-1">
-                  {formatNaira(selectedReceipt.amountKobo)}
-                </p>
+                <DualCurrency
+                  kobo={selectedReceipt.amountKobo}
+                  align="center"
+                  usdClassName="text-2xl font-black font-mono text-white"
+                  nairaClassName="text-xs font-mono text-slate-400"
+                />
                 <div className="mt-1.5">{getStatusBadge(selectedReceipt.status)}</div>
               </div>
 
@@ -278,11 +283,14 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 </div>
 
                 {selectedReceipt.feeKobo ? (
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="text-slate-400">Handling Fee:</span>
-                    <span className="text-pink-400 font-mono">
-                      {formatNaira(selectedReceipt.feeKobo)}
-                    </span>
+                    <DualCurrency
+                      kobo={selectedReceipt.feeKobo}
+                      align="right"
+                      usdClassName="text-pink-400 font-mono font-bold"
+                      nairaClassName="text-[10px] font-mono text-slate-400"
+                    />
                   </div>
                 ) : null}
 

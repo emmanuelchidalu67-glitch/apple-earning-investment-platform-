@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, nairaToKobo } from '../utils/formatters';
+import { formatNaira, formatUsd, nairaToKobo, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import {
   X,
   ArrowUpFromLine,
@@ -183,9 +184,12 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
             <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex justify-between items-center">
               <div>
                 <span className="text-[11px] text-slate-400">Available Withdrawable</span>
-                <p className="text-lg font-black text-sky-400 font-mono">
-                  {formatNaira(availableBalanceKobo)}
-                </p>
+                <DualCurrency
+                  kobo={availableBalanceKobo}
+                  rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                  usdClassName="text-lg font-black text-sky-400 font-mono"
+                  nairaClassName="text-xs font-mono text-slate-400"
+                />
               </div>
               <span className="text-[10px] px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded-md font-semibold">
                 Instant Settlement
@@ -193,9 +197,14 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Withdrawal Amount (₦)
-              </label>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-semibold text-slate-300">
+                  Withdrawal Amount
+                </label>
+                <span className="text-xs font-mono text-emerald-400 font-bold">
+                  ${(parsedAmount / (adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE)).toFixed(2)} USD
+                </span>
+              </div>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-pink-400 font-mono">
                   ₦
@@ -208,41 +217,61 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                   className="w-full pl-10 pr-4 py-3.5 bg-slate-900 border border-slate-700 rounded-2xl text-xl font-bold font-mono text-white focus:outline-none focus:border-pink-500"
                 />
               </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                ≈ ${(parsedAmount / (adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE)).toFixed(2)} USD (Rate: ₦{(adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE).toLocaleString()} / $1)
+              </p>
             </div>
 
             {/* Quick Amounts */}
             <div>
               <p className="text-xs font-semibold text-slate-300 mb-2">Quick Amounts</p>
               <div className="grid grid-cols-3 gap-2">
-                {quickWithdrawAmounts.map((amt) => (
-                  <button
-                    key={amt}
-                    type="button"
-                    onClick={() => setWithdrawAmount(amt.toString())}
-                    className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                      parsedAmount === amt
-                        ? 'bg-pink-500/20 border-pink-400 text-pink-300 shadow-sm'
-                        : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700'
-                    }`}
-                  >
-                    ₦{amt.toLocaleString()}
-                  </button>
-                ))}
+                {quickWithdrawAmounts.map((amt) => {
+                  const usdVal = (amt / (adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE)).toFixed(2);
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setWithdrawAmount(amt.toString())}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        parsedAmount === amt
+                          ? 'bg-pink-500/20 border-pink-400 text-pink-300 shadow-sm'
+                          : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="font-mono">${usdVal}</span>
+                      <span className="text-[10px] text-slate-400 font-normal">≈ ₦{(amt / 1000).toLocaleString()}k</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {/* Limits & Fee Calculation */}
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-400">
+            <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-2 text-xs">
+              <div className="flex justify-between items-center text-slate-400">
                 <span>Platform Processing Fee ({feePercent}%):</span>
-                <span className="text-pink-400 font-mono">-{formatNaira(feeKobo)}</span>
+                <DualCurrency
+                  kobo={feeKobo}
+                  rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                  prefix="-"
+                  align="right"
+                  usdClassName="text-pink-400 font-mono font-bold"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-800">
+              <div className="flex justify-between items-center font-bold text-white pt-1.5 border-t border-slate-800">
                 <span>Net Bank Payout:</span>
-                <span className="text-emerald-400 font-mono text-sm">{formatNaira(netPayoutKobo)}</span>
+                <DualCurrency
+                  kobo={netPayoutKobo}
+                  rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                  align="right"
+                  usdClassName="text-emerald-400 font-mono text-sm font-bold"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 pt-1">
-                <span>Min: ₦1,000 • Max: ₦5,000,000</span>
+                <span>Min: $0.65 (₦1,000) • Max: $3,225 (₦5,000,000)</span>
                 <span className={isWeekendBlocked ? 'text-amber-400 font-semibold' : 'text-emerald-400'}>
                   {isWeekendBlocked ? 'Closed on Sat/Sun' : 'Open: Mon - Fri (Banking Hours)'}
                 </span>
@@ -401,9 +430,15 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                 <span className="text-slate-400">Reference:</span>
                 <span className="font-mono font-bold text-pink-400">{confirmedReference}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Requested Amount:</span>
-                <span className="font-bold text-white">{formatNaira(confirmedAmountKobo)}</span>
+                <DualCurrency
+                  kobo={confirmedAmountKobo}
+                  rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                  align="right"
+                  usdClassName="font-bold text-white font-mono"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Destination:</span>

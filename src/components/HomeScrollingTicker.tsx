@@ -21,13 +21,14 @@ export const HomeScrollingTicker: React.FC = () => {
   // Dynamic VIP Yield items from loaded plans
   const yieldItems: TickerItem[] = plans.map((plan) => {
     const dailyPercent = ((plan.dailyReturnKobo / plan.capitalKobo) * 100).toFixed(1);
+    const usdDaily = ((plan.dailyReturnKobo / 100) / 1550).toFixed(2);
     return {
       id: `yield-${plan.id}`,
       type: 'yield',
       icon: '⚡',
       badge: `${plan.name}`,
       title: `Daily ROI: +${dailyPercent}%`,
-      detail: `${formatNaira(plan.dailyReturnKobo, false)}/day`,
+      detail: `$${usdDaily} (≈ ${formatNaira(plan.dailyReturnKobo, false)})/day`,
       highlight: `${plan.badge}`,
       color: 'border-sky-500/30 text-sky-300 bg-sky-950/40',
     };
@@ -42,7 +43,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Disbursed',
       title: `${t.bankDetails?.bankName || 'Nigerian Bank'}`,
-      detail: `${formatNaira(t.amountKobo, false)} paid`,
+      detail: `$${((t.amountKobo / 100) / 1550).toFixed(2)} (≈ ${formatNaira(t.amountKobo, false)})`,
       highlight: 'Just now',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     }));
@@ -54,7 +55,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('08035298194')} · Access Bank`,
-      detail: '₦650,000 Payout',
+      detail: '$419.35 (≈ ₦650,000)',
       highlight: '1m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -64,7 +65,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('08129481023')} · Moniepoint`,
-      detail: '₦1,250,000 Payout',
+      detail: '$806.45 (≈ ₦1,250,000)',
       highlight: '3m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -74,7 +75,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('07064829105')} · Zenith Bank`,
-      detail: '₦2,400,000 Payout',
+      detail: '$1,548.39 (≈ ₦2,400,000)',
       highlight: '5m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -84,7 +85,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('09051839201')} · OPay`,
-      detail: '₦480,000 Payout',
+      detail: '$309.68 (≈ ₦480,000)',
       highlight: '8m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -94,7 +95,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('08144824491')} · GTBank`,
-      detail: '₦3,800,000 Payout',
+      detail: '$2,451.61 (≈ ₦3,800,000)',
       highlight: '12m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -104,7 +105,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('08023813319')} · First Bank`,
-      detail: '₦950,000 Payout',
+      detail: '$612.90 (≈ ₦950,000)',
       highlight: '15m ago',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     },
@@ -114,7 +115,7 @@ export const HomeScrollingTicker: React.FC = () => {
       icon: '💸',
       badge: 'Paid',
       title: `${maskPhone('07081946620')} · USDT (BEP-20)`,
-      detail: '₦4,650,000 ($3,000)',
+      detail: '$3,000.00 (≈ ₦4,650,000)',
       highlight: '19m ago',
       color: 'border-teal-500/30 text-teal-300 bg-teal-950/40',
     },
@@ -210,7 +211,7 @@ export const HomeScrollingTicker: React.FC = () => {
           style={{
             animation: isPaused
               ? 'none'
-              : `marquee ${Math.max(10, Math.round(displayItems.length * 0.75))}s linear infinite`,
+              : `marquee ${Math.max(6, Math.round(displayItems.length * 0.3))}s linear infinite`,
           }}
         >
           {tickerItems.map((item, index) => (

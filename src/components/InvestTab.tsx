@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, formatDate } from '../utils/formatters';
+import { formatNaira, formatUsd, formatDate, koboToUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import { UserInvestment } from '../types';
 import {
   TrendingUp,
@@ -14,6 +15,8 @@ import {
   Activity,
   ArrowUpRight,
   ShieldCheck,
+  Timer,
+  Hourglass,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -23,37 +26,45 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  Legend,
 } from 'recharts';
 
 export const InvestTab: React.FC = () => {
-  const { userInvestments, investedCapitalKobo, verifiedEarningsKobo, availableBalanceKobo, setActiveTab } = useApp();
+  const {
+    userInvestments,
+    investedCapitalKobo,
+    verifiedEarningsKobo,
+    availableBalanceKobo,
+    adminSettings,
+    setActiveTab,
+  } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Completed'>('All');
   const [selectedInvestment, setSelectedInvestment] = useState<UserInvestment | null>(null);
   const [chartMetric, setChartMetric] = useState<'both' | 'portfolio' | 'yield'>('both');
 
-  // Live timer for 24-hour ticker countdown (updates every second)
+  // Live timer for 24-hour ticker and expiration countdown (updates every second)
   const [currentTime, setCurrentTime] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
+
   const filteredInvestments = userInvestments.filter((inv) => {
     if (statusFilter === 'All') return true;
     return inv.status === statusFilter;
   });
 
-  // Calculate 7-day interactive line chart data using Recharts
+  // Calculate 7-day interactive line chart data in USD using Recharts
   const chartData = useMemo(() => {
     const dataPoints = [];
     const now = new Date();
     const activeInvestments = userInvestments.filter((i) => i.status === 'Active');
-    const totalDailyReturnNaira = activeInvestments.reduce((sum, i) => sum + i.dailyReturnKobo, 0) / 100;
-    const currentCapitalNaira = investedCapitalKobo / 100;
-    const currentEarnedNaira = verifiedEarningsKobo / 100;
-    const baseBalanceNaira = availableBalanceKobo / 100;
+    const totalDailyReturnUsd =
+      activeInvestments.reduce((sum, i) => sum + koboToUsd(i.dailyReturnKobo, exchangeRate), 0);
+    const currentCapitalUsd = koboToUsd(investedCapitalKobo, exchangeRate);
+    const baseBalanceUsd = koboToUsd(availableBalanceKobo, exchangeRate);
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
@@ -62,29 +73,31 @@ export const InvestTab: React.FC = () => {
           ? 'Today'
           : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
-      // Daily yield earned or accrued
-      const dailyYieldNaira =
-        totalDailyReturnNaira > 0
-          ? Math.round(totalDailyReturnNaira)
-          : (currentCapitalNaira > 0 ? Math.round(currentCapitalNaira * 0.05) : 0);
+      // Daily yield earned or accrued in USD
+      const dailyYieldUsd =
+        totalDailyReturnUsd > 0
+          ? Number(totalDailyReturnUsd.toFixed(2))
+          : (currentCapitalUsd > 0 ? Number((currentCapitalUsd * 0.05).toFixed(2)) : 0);
 
-      // Cumulative portfolio growth across 7 days
+      // Cumulative portfolio growth across 7 days in USD
       const daysAgo = 6 - i;
       const portfolioGrowth =
-        currentCapitalNaira > 0
-          ? Math.round(currentCapitalNaira + dailyYieldNaira * daysAgo)
-          : Math.round(baseBalanceNaira);
+        currentCapitalUsd > 0
+          ? Number((currentCapitalUsd + dailyYieldUsd * daysAgo).toFixed(2))
+          : Number(baseBalanceUsd.toFixed(2));
 
       dataPoints.push({
         date: dateLabel,
         portfolio: portfolioGrowth,
-        yieldEarnings: dailyYieldNaira,
+        yieldEarnings: dailyYieldUsd,
+        portfolioNaira: Math.round(portfolioGrowth * exchangeRate),
+        yieldNaira: Math.round(dailyYieldUsd * exchangeRate),
       });
     }
     return dataPoints;
-  }, [userInvestments, investedCapitalKobo, verifiedEarningsKobo, availableBalanceKobo]);
+  }, [userInvestments, investedCapitalKobo, availableBalanceKobo, exchangeRate]);
 
-  // Helper for 24-hour ticker calculation
+  // Helper for 24-hour cycle ticker calculation
   const get24HourTicker = (inv: UserInvestment) => {
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     const startOrLast = new Date(inv.lastClaimDate || inv.startDate).getTime();
@@ -107,6 +120,32 @@ export const InvestTab: React.FC = () => {
     };
   };
 
+  // Helper for Plan Expiration Countdown Timer (remaining hours:minutes:seconds)
+  const getExpirationCountdown = (maturityDateStr: string) => {
+    const target = new Date(maturityDateStr).getTime();
+    const remainingMs = Math.max(0, target - currentTime);
+    const totalSecs = Math.floor(remainingMs / 1000);
+    const days = Math.floor(totalSecs / (3600 * 24));
+    const hours = Math.floor((totalSecs % (3600 * 24)) / 3600);
+    const minutes = Math.floor((totalSecs % 3600) / 60);
+    const seconds = totalSecs % 60;
+    const isExpired = remainingMs <= 0;
+
+    return {
+      isExpired,
+      days,
+      hours,
+      minutes,
+      seconds,
+      formattedDaysHoursMinSec: `${days}d ${hours.toString().padStart(2, '0')}h ${minutes
+        .toString()
+        .padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`,
+      totalHoursMinSec: `${(days * 24 + hours).toString().padStart(2, '0')}:${minutes
+        .toString()
+        .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+    };
+  };
+
   return (
     <div className="pb-24 pt-2 px-4 space-y-4">
       {/* Top Header */}
@@ -123,7 +162,7 @@ export const InvestTab: React.FC = () => {
         </button>
       </div>
 
-      {/* 7-DAY INTERACTIVE LINE CHART (RECHARTS) */}
+      {/* 7-DAY INTERACTIVE LINE CHART (RECHARTS) IN USD WITH NAIRA SUB-LABEL */}
       <div className="rounded-3xl p-4 bg-gradient-to-br from-[#081836] via-[#0b2149] to-[#051126] border border-sky-400/30 shadow-xl space-y-3">
         <div className="flex justify-between items-center flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -132,9 +171,11 @@ export const InvestTab: React.FC = () => {
             </div>
             <div>
               <h3 className="text-xs font-black uppercase tracking-wider text-white">
-                7-Day Growth & Daily Yield
+                7-Day Growth & Daily Yield ($)
               </h3>
-              <p className="text-[10px] text-sky-200/80">Interactive Portfolio Performance</p>
+              <p className="text-[10px] text-sky-200/80">
+                Interactive Portfolio Performance (1 USD ≈ ₦{exchangeRate.toLocaleString()})
+              </p>
             </div>
           </div>
 
@@ -170,7 +211,7 @@ export const InvestTab: React.FC = () => {
         {/* Recharts Container */}
         <div className="h-48 w-full pt-2">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -18, bottom: 0 }}>
+            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -16, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis
                 dataKey="date"
@@ -183,27 +224,36 @@ export const InvestTab: React.FC = () => {
                 tick={{ fontSize: 9, fill: '#94a3b8' }}
                 axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
                 tickFormatter={(val) => {
-                  if (val >= 1000000) return `₦${(val / 1000000).toFixed(1)}M`;
-                  if (val >= 1000) return `₦${(val / 1000).toFixed(0)}k`;
-                  return `₦${val}`;
+                  if (val >= 1000) return `$${(val / 1000).toFixed(1)}k`;
+                  return `$${val}`;
                 }}
               />
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (active && payload && payload.length) {
                     return (
-                      <div className="p-2.5 rounded-xl bg-slate-950/95 border border-sky-500/40 shadow-2xl text-xs space-y-1">
+                      <div className="p-2.5 rounded-xl bg-slate-950/95 border border-sky-500/40 shadow-2xl text-xs space-y-1.5">
                         <p className="font-bold text-slate-300 border-b border-slate-800 pb-1">{label}</p>
-                        {payload.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between gap-3 text-[11px]">
-                            <span style={{ color: item.color }} className="font-semibold">
-                              {item.name}:
-                            </span>
-                            <span className="font-mono font-bold text-white">
-                              ₦{(Number(item.value) || 0).toLocaleString()}
-                            </span>
-                          </div>
-                        ))}
+                        {payload.map((item, idx) => {
+                          const isPortfolio = item.dataKey === 'portfolio';
+                          const valNum = Number(item.value) || 0;
+                          const nairaVal = Math.round(valNum * exchangeRate);
+                          return (
+                            <div key={idx} className="space-y-0.5 text-[11px]">
+                              <div className="flex items-center justify-between gap-3">
+                                <span style={{ color: item.color }} className="font-semibold">
+                                  {item.name}:
+                                </span>
+                                <span className="font-mono font-bold text-white">
+                                  ${valNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 text-right font-mono">
+                                ≈ ₦{nairaVal.toLocaleString()}
+                              </p>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   }
@@ -214,7 +264,7 @@ export const InvestTab: React.FC = () => {
                 <Line
                   type="monotone"
                   dataKey="portfolio"
-                  name="Portfolio Growth"
+                  name="Portfolio Growth ($)"
                   stroke="#38bdf8"
                   strokeWidth={2.5}
                   dot={{ r: 3, fill: '#38bdf8' }}
@@ -225,7 +275,7 @@ export const InvestTab: React.FC = () => {
                 <Line
                   type="monotone"
                   dataKey="yieldEarnings"
-                  name="Daily Yield"
+                  name="Daily Yield ($)"
                   stroke="#10b981"
                   strokeWidth={2}
                   dot={{ r: 3, fill: '#10b981' }}
@@ -241,14 +291,14 @@ export const InvestTab: React.FC = () => {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-sky-400" />
-              <span>Capital Growth</span>
+              <span>Capital Growth ($)</span>
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>24h Yield Earnings</span>
+              <span>24h Yield ($)</span>
             </span>
           </div>
-          <span className="font-bold text-sky-300">Updated Real-Time</span>
+          <span className="font-bold text-sky-300">Live Auto-Calculated</span>
         </div>
       </div>
 
@@ -269,7 +319,7 @@ export const InvestTab: React.FC = () => {
         ))}
       </div>
 
-      {/* Investments List with 24-hr reach ticker & counting */}
+      {/* Investments List */}
       <div className="space-y-3.5">
         {filteredInvestments.length === 0 ? (
           <div className="p-8 text-center bg-slate-900/40 rounded-3xl border border-slate-800">
@@ -288,7 +338,8 @@ export const InvestTab: React.FC = () => {
         ) : (
           filteredInvestments.map((inv) => {
             const progressPercent = Math.min(100, Math.round((inv.daysElapsed / inv.durationDays) * 100));
-            const ticker = get24HourTicker(inv);
+            const ticker24h = get24HourTicker(inv);
+            const countdownExp = getExpirationCountdown(inv.maturityDate);
 
             return (
               <div
@@ -316,13 +367,18 @@ export const InvestTab: React.FC = () => {
 
                   <div className="text-right">
                     <span className="text-[10px] text-slate-400">Working Capital</span>
-                    <p className="text-xs font-black font-mono text-white">
-                      {formatNaira(inv.capitalKobo, false)}
-                    </p>
+                    <DualCurrency
+                      kobo={inv.capitalKobo}
+                      rate={exchangeRate}
+                      showCents={true}
+                      align="right"
+                      usdClassName="text-xs font-black font-mono text-white"
+                      nairaClassName="text-[10px] text-slate-400 font-mono"
+                    />
                   </div>
                 </div>
 
-                {/* 24-HOUR REACH TICKER & LIVE COUNTDOWN */}
+                {/* 24-HOUR REACH TICKER & COUNTING (Daily Yield Auto-credit cycle) */}
                 {inv.status === 'Active' && (
                   <div className="p-3 rounded-2xl bg-gradient-to-r from-[#071936] to-[#092247] border border-sky-400/30 space-y-2">
                     <div className="flex justify-between items-center text-xs">
@@ -332,9 +388,9 @@ export const InvestTab: React.FC = () => {
                           24h Reach Ticker:
                         </span>
                       </div>
-                      <div className="flex items-center gap-1 font-mono font-bold text-xs text-amber-300 bg-slate-950/80 px-2 py-0.5 rounded-lg border border-amber-500/30">
+                      <div className="flex items-center gap-1 font-mono font-bold text-xs text-amber-300 bg-slate-950/80 px-2.5 py-0.5 rounded-lg border border-amber-500/30">
                         <Clock className="w-3.5 h-3.5 text-amber-400" />
-                        <span>{ticker.formatted}</span>
+                        <span>{ticker24h.formatted}</span>
                       </div>
                     </div>
 
@@ -343,15 +399,79 @@ export const InvestTab: React.FC = () => {
                       <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-sky-500/20">
                         <div
                           className="h-full bg-gradient-to-r from-emerald-500 to-sky-400 transition-all duration-1000"
-                          style={{ width: `${ticker.cyclePercent}%` }}
+                          style={{ width: `${ticker24h.cyclePercent}%` }}
                         />
                       </div>
                       <div className="flex justify-between text-[9px] text-slate-400 font-medium">
-                        <span>Cycle: {ticker.cyclePercent}% complete</span>
-                        <span className="text-emerald-300 font-bold">
-                          +{formatNaira(inv.dailyReturnKobo, false)} auto-credits in 24h
+                        <span>Cycle: {ticker24h.cyclePercent}% complete</span>
+                        <span className="text-emerald-300 font-bold font-mono">
+                          +{formatUsd(inv.dailyReturnKobo, true, exchangeRate)} (≈ +{formatNaira(inv.dailyReturnKobo, false)}) in 24h
                         </span>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* VISUAL COUNTDOWN TIMER: REMAINING HOURS:MINUTES:SECONDS UNTIL EXPIRATION */}
+                {inv.status === 'Active' && (
+                  <div className="p-3 rounded-2xl bg-gradient-to-r from-[#180e29] via-[#101938] to-[#081730] border border-purple-500/30 shadow-md space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded-lg bg-pink-500/20 border border-pink-400/40 flex items-center justify-center text-pink-400">
+                          <Timer className="w-3 h-3 animate-pulse" />
+                        </div>
+                        <span className="text-[10px] uppercase font-black tracking-wider text-pink-300">
+                          Expiration Countdown
+                        </span>
+                      </div>
+
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">
+                        Contract Closes In
+                      </span>
+                    </div>
+
+                    {/* Digital Countdown Timer Display */}
+                    <div className="grid grid-cols-4 gap-1.5 text-center">
+                      <div className="p-1.5 rounded-xl bg-slate-950/80 border border-purple-500/20">
+                        <span className="block font-mono text-xs font-black text-white">
+                          {countdownExp.days.toString().padStart(2, '0')}
+                        </span>
+                        <span className="text-[8px] uppercase tracking-wider text-slate-400 font-semibold">
+                          Days
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-xl bg-slate-950/80 border border-purple-500/20">
+                        <span className="block font-mono text-xs font-black text-amber-300">
+                          {countdownExp.hours.toString().padStart(2, '0')}
+                        </span>
+                        <span className="text-[8px] uppercase tracking-wider text-slate-400 font-semibold">
+                          Hours
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-xl bg-slate-950/80 border border-purple-500/20">
+                        <span className="block font-mono text-xs font-black text-sky-300">
+                          {countdownExp.minutes.toString().padStart(2, '0')}
+                        </span>
+                        <span className="text-[8px] uppercase tracking-wider text-slate-400 font-semibold">
+                          Mins
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-xl bg-slate-950/80 border border-purple-500/20">
+                        <span className="block font-mono text-xs font-black text-pink-400 animate-pulse">
+                          {countdownExp.seconds.toString().padStart(2, '0')}
+                        </span>
+                        <span className="text-[8px] uppercase tracking-wider text-slate-400 font-semibold">
+                          Secs
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Compact Hours:Minutes:Seconds string */}
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 pt-0.5 px-0.5">
+                      <span className="text-slate-400">Total Remaining:</span>
+                      <span className="font-mono font-bold text-pink-300 bg-black/40 px-2 py-0.5 rounded border border-pink-500/20">
+                        {countdownExp.totalHoursMinSec} (H:M:S)
+                      </span>
                     </div>
                   </div>
                 )}
@@ -396,9 +516,14 @@ export const InvestTab: React.FC = () => {
                 <div className="flex justify-between items-center pt-1 border-t border-slate-800/80">
                   <div>
                     <span className="text-[10px] text-slate-400">Total Accrued Profit</span>
-                    <p className="text-xs font-black font-mono text-emerald-400">
-                      +{formatNaira(inv.earnedKobo)}
-                    </p>
+                    <DualCurrency
+                      kobo={inv.earnedKobo}
+                      rate={exchangeRate}
+                      prefix="+"
+                      align="left"
+                      usdClassName="text-xs font-black font-mono text-emerald-400"
+                      nairaClassName="text-[10px] text-slate-400 font-mono"
+                    />
                   </div>
 
                   <div className="text-right">
@@ -438,33 +563,52 @@ export const InvestTab: React.FC = () => {
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5 text-xs">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Capital Invested:</span>
-                <span className="font-bold font-mono text-white">
-                  {formatNaira(selectedInvestment.capitalKobo)}
-                </span>
+                <DualCurrency
+                  kobo={selectedInvestment.capitalKobo}
+                  rate={exchangeRate}
+                  align="right"
+                  usdClassName="font-bold font-mono text-white text-xs"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Daily Return:</span>
-                <span className="font-bold font-mono text-emerald-400">
-                  +{formatNaira(selectedInvestment.dailyReturnKobo)} / day
-                </span>
+                <DualCurrency
+                  kobo={selectedInvestment.dailyReturnKobo}
+                  rate={exchangeRate}
+                  prefix="+"
+                  suffix=" / day"
+                  align="right"
+                  usdClassName="font-bold font-mono text-emerald-400 text-xs"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Contract Duration:</span>
                 <span className="text-slate-200">{selectedInvestment.durationDays} Days</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Total Contract Value:</span>
-                <span className="font-bold font-mono text-sky-300">
-                  {formatNaira(selectedInvestment.totalPayoutKobo)}
-                </span>
+                <DualCurrency
+                  kobo={selectedInvestment.totalPayoutKobo}
+                  rate={exchangeRate}
+                  align="right"
+                  usdClassName="font-bold font-mono text-sky-300 text-xs"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Accumulated Earnings:</span>
-                <span className="font-black font-mono text-emerald-400">
-                  +{formatNaira(selectedInvestment.earnedKobo)}
-                </span>
+                <DualCurrency
+                  kobo={selectedInvestment.earnedKobo}
+                  rate={exchangeRate}
+                  prefix="+"
+                  align="right"
+                  usdClassName="font-black font-mono text-emerald-400 text-xs"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Starting Time:</span>

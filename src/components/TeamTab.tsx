@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, maskPhone } from '../utils/formatters';
+import { formatNaira, formatUsd, maskPhone, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import {
   Users,
   Copy,
@@ -15,10 +16,12 @@ import {
 } from 'lucide-react';
 
 export const TeamTab: React.FC = () => {
-  const { user, referralStats, allUsers } = useApp();
+  const { user, referralStats, allUsers, adminSettings } = useApp();
 
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
   const referralCode = user?.referralCode || 'APPLE77';
   const referralLink = `https://applecard.ng/register?ref=${referralCode}`;
@@ -104,9 +107,13 @@ export const TeamTab: React.FC = () => {
 
         <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
           <p className="text-[10px] uppercase font-semibold text-slate-400">Verified Rewards</p>
-          <p className="text-2xl font-black font-mono text-emerald-400 mt-1">
-            {formatNaira(referralStats.verifiedRewardsKobo, false)}
-          </p>
+          <DualCurrency
+            kobo={referralStats.verifiedRewardsKobo}
+            rate={exchangeRate}
+            showCents={true}
+            usdClassName="text-2xl font-black font-mono text-emerald-400 mt-1"
+            nairaClassName="text-[10px] font-mono text-slate-400"
+          />
           <p className="text-[10px] text-emerald-400 mt-0.5">Paid into balance</p>
         </div>
       </div>
@@ -126,9 +133,15 @@ export const TeamTab: React.FC = () => {
               {referralStats.tier1.membersCount}
             </p>
             <p className="text-[10px] text-slate-400">Direct Investors</p>
-            <p className="text-xs font-bold text-emerald-400 font-mono pt-1 border-t border-slate-800">
-              {formatNaira(referralStats.tier1.earningsKobo, false)}
-            </p>
+            <div className="pt-1 border-t border-slate-800">
+              <DualCurrency
+                kobo={referralStats.tier1.earningsKobo}
+                rate={exchangeRate}
+                align="center"
+                usdClassName="text-xs font-bold text-emerald-400 font-mono"
+                nairaClassName="text-[9px] font-mono text-slate-400"
+              />
+            </div>
           </div>
 
           {/* Tier 2 */}
@@ -140,9 +153,15 @@ export const TeamTab: React.FC = () => {
               {referralStats.tier2.membersCount}
             </p>
             <p className="text-[10px] text-slate-400">Level 2 Network</p>
-            <p className="text-xs font-bold text-emerald-400 font-mono pt-1 border-t border-slate-800">
-              {formatNaira(referralStats.tier2.earningsKobo, false)}
-            </p>
+            <div className="pt-1 border-t border-slate-800">
+              <DualCurrency
+                kobo={referralStats.tier2.earningsKobo}
+                rate={exchangeRate}
+                align="center"
+                usdClassName="text-xs font-bold text-emerald-400 font-mono"
+                nairaClassName="text-[9px] font-mono text-slate-400"
+              />
+            </div>
           </div>
 
           {/* Tier 3 */}
@@ -154,9 +173,15 @@ export const TeamTab: React.FC = () => {
               {referralStats.tier3.membersCount}
             </p>
             <p className="text-[10px] text-slate-400">Level 3 Network</p>
-            <p className="text-xs font-bold text-emerald-400 font-mono pt-1 border-t border-slate-800">
-              {formatNaira(referralStats.tier3.earningsKobo, false)}
-            </p>
+            <div className="pt-1 border-t border-slate-800">
+              <DualCurrency
+                kobo={referralStats.tier3.earningsKobo}
+                rate={exchangeRate}
+                align="center"
+                usdClassName="text-xs font-bold text-emerald-400 font-mono"
+                nairaClassName="text-[9px] font-mono text-slate-400"
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -131,7 +131,7 @@ interface AppContextType {
   unreadNotificationCount: number;
   markNotificationAsRead: (id: string) => void;
   markAllNotificationsAsRead: () => void;
-  addNotification: (title: string, message: string, type?: NotificationItem['type']) => void;
+  addNotification: (title: string, message: string, type?: NotificationItem['type'], targetUserId?: string) => void;
 
   // Admin Capabilities & System Controls
   adminSettings: AdminSettings;
@@ -477,12 +477,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       .filter((tx) => (!user || tx.userId === user.id) && tx.status === 'Completed' && (tx.type === 'referral_bonus' || tx.type === 'topup_code'))
       .reduce((sum, tx) => sum + tx.amountKobo, 0);
 
-  const unreadNotificationCount = notifications.filter((n) => !n.isRead).length;
+  // Notifications: Strictly filtered per user
+  const userNotifications = notifications.filter((n) => {
+    if (!user) return n.userId === 'guest' || n.userId === 'all';
+    return n.userId === user.id || n.userId === 'all';
+  });
 
-  const addNotification = (title: string, message: string, type: NotificationItem['type'] = 'system') => {
+  const unreadNotificationCount = userNotifications.filter((n) => !n.isRead).length;
+
+  const addNotification = (
+    title: string,
+    message: string,
+    type: NotificationItem['type'] = 'system',
+    targetUserId?: string
+  ) => {
     const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      userId: user?.id || 'guest',
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      userId: targetUserId || user?.id || 'guest',
       title,
       message,
       type,
@@ -499,7 +510,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const markAllNotificationsAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    setNotifications((prev) =>
+      prev.map((n) => {
+        if (!user || n.userId === user.id || n.userId === 'all' || n.userId === 'guest') {
+          return { ...n, isRead: true };
+        }
+        return n;
+      })
+    );
   };
 
   // AUTH: Login
@@ -1294,7 +1312,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     addNotification(
       'Deposit Confirmed',
-      `Deposit of ₦${(tx.amountKobo / 100).toLocaleString()} (Ref: ${tx.reference}) has been confirmed and credited to balance.`
+      `Deposit of ₦${(tx.amountKobo / 100).toLocaleString()} (Ref: ${tx.reference}) has been confirmed and credited to balance.`,
+      'transaction',
+      tx.userId
     );
 
     return { success: true };
@@ -1320,7 +1340,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     setAuditLogs((prev) => [audit, ...prev]);
 
-    addNotification('Deposit Declined', `Deposit (Ref: ${tx.reference}) was rejected. Reason: ${reason}`);
+    addNotification(
+      'Deposit Declined',
+      `Deposit (Ref: ${tx.reference}) was rejected. Reason: ${reason}`,
+      'system',
+      tx.userId
+    );
     return { success: true };
   };
 
@@ -1347,7 +1372,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     addNotification(
       'Withdrawal Paid',
-      `Withdrawal of ₦${(tx.amountKobo / 100).toLocaleString()} has been paid out successfully to your bank.`
+      `Withdrawal of ₦${(tx.amountKobo / 100).toLocaleString()} has been paid out successfully to your bank.`,
+      'transaction',
+      tx.userId
     );
 
     return { success: true };
@@ -1378,7 +1405,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     addNotification(
       'Withdrawal Refunded',
-      `Withdrawal (Ref: ${tx.reference}) was rejected and ₦${(tx.amountKobo / 100).toLocaleString()} returned to your balance. Reason: ${reason}`
+      `Withdrawal (Ref: ${tx.reference}) was rejected and ₦${(tx.amountKobo / 100).toLocaleString()} returned to your balance. Reason: ${reason}`,
+      'system',
+      tx.userId
     );
 
     return { success: true };
@@ -1650,7 +1679,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         buyDataBundle,
         payElectricityBill,
 
-        notifications,
+        notifications: userNotifications,
         unreadNotificationCount,
         markNotificationAsRead,
         markAllNotificationsAsRead,

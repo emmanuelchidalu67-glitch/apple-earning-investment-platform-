@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira } from '../utils/formatters';
+import { formatNaira, formatUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import { InvestmentPlan } from '../types';
 import {
   Layers,
@@ -20,11 +21,13 @@ interface PlansTabProps {
 }
 
 export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
-  const { plans, availableBalanceKobo } = useApp();
+  const { plans, availableBalanceKobo, adminSettings } = useApp();
 
   const [selectedPlanForReview, setSelectedPlanForReview] = useState<InvestmentPlan | null>(null);
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
   const handleOpenReview = (plan: InvestmentPlan) => {
     setErrorMessage(null);
@@ -40,9 +43,11 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
     }
     if (availableBalanceKobo < selectedPlanForReview.capitalKobo) {
       setErrorMessage(
-        `Insufficient available balance. Required: ${formatNaira(
-          selectedPlanForReview.capitalKobo
-        )}. Please deposit first.`
+        `Insufficient available balance. Required: ${formatUsd(
+          selectedPlanForReview.capitalKobo,
+          true,
+          exchangeRate
+        )} (≈ ${formatNaira(selectedPlanForReview.capitalKobo, false)}). Please deposit first.`
       );
       return;
     }
@@ -70,7 +75,7 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
           </span>
           <span>•</span>
           <span className="flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-pink-400" /> Daily Yield Settlements
+            <Sparkles className="w-3.5 h-3.5 text-pink-400" /> Daily Yield Settlements ($)
           </span>
         </div>
       </div>
@@ -114,25 +119,38 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
                 </div>
               </div>
 
-              {/* Financial Metrics Card */}
+              {/* Financial Metrics Card - USD Primary with Naira Sub-label */}
               <div className="grid grid-cols-3 gap-2 my-3 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-left">
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-semibold">Capital</span>
-                  <p className="text-sm font-black text-white font-mono mt-0.5">
-                    {formatNaira(plan.capitalKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.capitalKobo}
+                    rate={exchangeRate}
+                    showCents={false}
+                    usdClassName="text-sm font-black text-white font-mono mt-0.5"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-semibold">Daily Yield</span>
-                  <p className="text-sm font-black text-emerald-400 font-mono mt-0.5">
-                    +{formatNaira(plan.dailyReturnKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.dailyReturnKobo}
+                    rate={exchangeRate}
+                    prefix="+"
+                    showCents={true}
+                    usdClassName="text-sm font-black text-emerald-400 font-mono mt-0.5"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-semibold">Total Payout</span>
-                  <p className="text-sm font-black text-sky-300 font-mono mt-0.5">
-                    {formatNaira(plan.totalPayoutKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.totalPayoutKobo}
+                    rate={exchangeRate}
+                    showCents={false}
+                    usdClassName="text-sm font-black text-sky-300 font-mono mt-0.5"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
               </div>
 
@@ -157,7 +175,9 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
                     : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border border-sky-500/30'
                 }`}
               >
-                <span>Invest Now — {formatNaira(plan.capitalKobo, false)}</span>
+                <span>
+                  Invest Now — {formatUsd(plan.capitalKobo, false, exchangeRate)} (≈ {formatNaira(plan.capitalKobo, false)})
+                </span>
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -194,37 +214,55 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
               </div>
             )}
 
-            {/* Terms Summary */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2 text-xs">
-              <div className="flex justify-between">
+            {/* Terms Summary with Dual Currency */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5 text-xs">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Required Capital:</span>
-                <span className="font-bold font-mono text-white text-sm">
-                  {formatNaira(selectedPlanForReview.capitalKobo)}
-                </span>
+                <DualCurrency
+                  kobo={selectedPlanForReview.capitalKobo}
+                  rate={exchangeRate}
+                  align="right"
+                  usdClassName="font-bold font-mono text-white text-sm"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Daily Verified Yield:</span>
-                <span className="font-bold font-mono text-emerald-400">
-                  +{formatNaira(selectedPlanForReview.dailyReturnKobo)} / day
-                </span>
+                <DualCurrency
+                  kobo={selectedPlanForReview.dailyReturnKobo}
+                  rate={exchangeRate}
+                  prefix="+"
+                  suffix=" / day"
+                  align="right"
+                  usdClassName="font-bold font-mono text-emerald-400"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Contract Duration:</span>
                 <span className="font-semibold text-sky-300">
                   {selectedPlanForReview.durationDays} Days (Maturity settlement)
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Total Projected Payout:</span>
-                <span className="font-black font-mono text-sky-300 text-sm">
-                  {formatNaira(selectedPlanForReview.totalPayoutKobo)}
-                </span>
+                <DualCurrency
+                  kobo={selectedPlanForReview.totalPayoutKobo}
+                  rate={exchangeRate}
+                  align="right"
+                  usdClassName="font-black font-mono text-sky-300 text-sm"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
-              <div className="flex justify-between pt-1 border-t border-slate-800">
+              <div className="flex justify-between items-center pt-2 border-t border-slate-800">
                 <span className="text-slate-400">Your Current Balance:</span>
-                <span className="font-mono font-bold text-white">
-                  {formatNaira(availableBalanceKobo)}
-                </span>
+                <DualCurrency
+                  kobo={availableBalanceKobo}
+                  rate={exchangeRate}
+                  align="right"
+                  usdClassName="font-mono font-bold text-white"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
               </div>
             </div>
 
@@ -235,7 +273,7 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
                 <span>Verified Diamond Contract Guarantee</span>
               </p>
               <p>
-                By proceeding, you authorize the debit of {formatNaira(selectedPlanForReview.capitalKobo)} from your verified balance. Earnings accrue automatically every 24 hours for {selectedPlanForReview.durationDays} continuous days.
+                By proceeding, you authorize the debit of {formatUsd(selectedPlanForReview.capitalKobo, false, exchangeRate)} (≈ {formatNaira(selectedPlanForReview.capitalKobo, false)}) from your verified balance. Earnings accrue automatically every 24 hours for {selectedPlanForReview.durationDays} continuous days.
               </p>
               <p className="text-slate-400">
                 Capital and payouts are 100% verified and protected under Apple Card investment treasury provisions.
@@ -252,7 +290,7 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
                 className="mt-1 w-4 h-4 rounded text-sky-500 focus:ring-sky-500 bg-slate-900 border-slate-700"
               />
               <label htmlFor="contract-ack" className="text-xs text-slate-300 leading-tight">
-                I agree to activate {selectedPlanForReview.name} and receive my daily yield schedule ({formatNaira(selectedPlanForReview.dailyReturnKobo)}/day).
+                I agree to activate {selectedPlanForReview.name} and receive my daily yield schedule ({formatUsd(selectedPlanForReview.dailyReturnKobo, true, exchangeRate)} / ≈ {formatNaira(selectedPlanForReview.dailyReturnKobo, false)}/day).
               </label>
             </div>
 
@@ -269,7 +307,7 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
                 onClick={handleConfirmInvestment}
                 className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-pink-600 text-white text-xs font-bold uppercase tracking-wider shadow-md shadow-sky-500/25"
               >
-                Confirm & Activate Plan
+                Confirm & Activate
               </button>
             </div>
           </div>

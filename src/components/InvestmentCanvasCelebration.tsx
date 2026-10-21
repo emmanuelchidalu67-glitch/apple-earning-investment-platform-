@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Sparkles, Gem, CheckCircle2 } from 'lucide-react';
-import { formatNaira } from '../utils/formatters';
+import { formatNaira, formatUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 
 interface InvestmentCanvasCelebrationProps {
   planName: string;
@@ -183,15 +184,24 @@ export const InvestmentCanvasCelebration: React.FC<InvestmentCanvasCelebrationPr
         <div className="grid grid-cols-2 gap-2 my-4 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
           <div>
             <span className="text-[10px] uppercase text-slate-400 font-bold">Capital</span>
-            <p className="text-sm font-black font-mono text-white mt-0.5">
-              {formatNaira(capitalKobo, false)}
-            </p>
+            <DualCurrency
+              kobo={capitalKobo}
+              showCents={false}
+              align="center"
+              usdClassName="text-sm font-black font-mono text-white mt-0.5"
+              nairaClassName="text-[10px] font-mono text-slate-400"
+            />
           </div>
           <div>
             <span className="text-[10px] uppercase text-slate-400 font-bold">Daily Yield</span>
-            <p className="text-sm font-black font-mono text-emerald-400 mt-0.5">
-              +{formatNaira(dailyYieldKobo, false)}
-            </p>
+            <DualCurrency
+              kobo={dailyYieldKobo}
+              prefix="+"
+              showCents={true}
+              align="center"
+              usdClassName="text-sm font-black font-mono text-emerald-400 mt-0.5"
+              nairaClassName="text-[10px] font-mono text-slate-400"
+            />
           </div>
         </div>
 

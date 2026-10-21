@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, maskPhone, formatDate } from '../utils/formatters';
+import { formatNaira, formatUsd, maskPhone, formatDate, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import {
   Wallet,
   ArrowDownToLine,
@@ -134,11 +135,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* Big Balance Display (Initially ₦0.00 until bonus credited!) */}
-        <div className="my-2">
+        {/* Big Balance Display (USD Primary with Naira Conversion Below) */}
+        <div className="my-2 space-y-0.5">
           <h2 className="text-3xl font-black font-mono tracking-tight text-white drop-shadow-[0_2px_10px_rgba(255,255,255,0.15)]">
-            {showBalance ? formatNaira(availableBalanceKobo) : '••••••••'}
+            {showBalance ? formatUsd(availableBalanceKobo, true, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••••••'}
           </h2>
+          <p className="text-xs font-mono font-bold text-sky-300/90">
+            {showBalance ? `≈ ${formatNaira(availableBalanceKobo)}` : '••••••••'}
+          </p>
         </div>
 
         {/* Three Sub-metrics: Invested Capital | Verified Earnings | Pending Withdrawal */}
@@ -146,19 +150,28 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <div>
             <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Invested</p>
             <p className="text-xs font-bold font-mono text-sky-300 mt-0.5">
-              {showBalance ? formatNaira(investedCapitalKobo, false) : '••••'}
+              {showBalance ? formatUsd(investedCapitalKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+            </p>
+            <p className="text-[10px] font-mono text-slate-400">
+              {showBalance ? `≈ ${formatNaira(investedCapitalKobo, false)}` : '••••'}
             </p>
           </div>
           <div>
             <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Verified Profit</p>
             <p className="text-xs font-bold font-mono text-emerald-400 mt-0.5">
-              {showBalance ? formatNaira(verifiedEarningsKobo, false) : '••••'}
+              {showBalance ? formatUsd(verifiedEarningsKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+            </p>
+            <p className="text-[10px] font-mono text-slate-400">
+              {showBalance ? `≈ ${formatNaira(verifiedEarningsKobo, false)}` : '••••'}
             </p>
           </div>
           <div>
             <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Pending Wth</p>
             <p className="text-xs font-bold font-mono text-pink-400 mt-0.5">
-              {showBalance ? formatNaira(pendingWithdrawalKobo, false) : '••••'}
+              {showBalance ? formatUsd(pendingWithdrawalKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+            </p>
+            <p className="text-[10px] font-mono text-slate-400">
+              {showBalance ? `≈ ${formatNaira(pendingWithdrawalKobo, false)}` : '••••'}
             </p>
           </div>
         </div>
@@ -173,19 +186,20 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-white uppercase tracking-wider">
-                ₦800 Welcome Bonus
+                $0.52 Welcome Bonus
               </span>
               <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold">
                 Auto-Credited
               </span>
             </div>
             <p className="text-[10px] text-slate-300 leading-tight">
-              One-time registration incentive active in your verified available balance.
+              One-time registration incentive active in your verified available balance (≈ ₦800).
             </p>
           </div>
         </div>
-        <div className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono font-bold flex-shrink-0">
-          +₦800.00
+        <div className="text-right px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex-shrink-0">
+          <span className="text-xs font-mono font-bold text-emerald-300 block">+$0.52</span>
+          <span className="text-[9px] font-mono text-emerald-400/80 block">≈ ₦800</span>
         </div>
       </div>
 
@@ -327,7 +341,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               ) : (
                 <span>
                   <strong className="text-amber-300">Spin Locked: </strong>
-                  Requires personal investment of <strong>₦500,000</strong> OR 1 friend investment of <strong>₦200,000</strong>.
+                  Requires personal investment of <strong>$322.58</strong> (≈ ₦500,000) OR 1 friend investment of <strong>$129.03</strong> (≈ ₦200,000).
                 </span>
               )}
             </div>
@@ -458,21 +472,34 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               <div className="grid grid-cols-3 gap-2 my-3 p-2.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 text-left">
                 <div>
                   <span className="text-[10px] text-slate-400">Capital</span>
-                  <p className="text-xs font-bold text-white font-mono">
-                    {formatNaira(plan.capitalKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.capitalKobo}
+                    rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                    showCents={false}
+                    usdClassName="text-xs font-bold text-white font-mono"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400">Daily Return</span>
-                  <p className="text-xs font-bold text-emerald-400 font-mono">
-                    +{formatNaira(plan.dailyReturnKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.dailyReturnKobo}
+                    rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                    prefix="+"
+                    showCents={true}
+                    usdClassName="text-xs font-bold text-emerald-400 font-mono"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400">Total Payout</span>
-                  <p className="text-xs font-bold text-sky-300 font-mono">
-                    {formatNaira(plan.totalPayoutKobo, false)}
-                  </p>
+                  <DualCurrency
+                    kobo={plan.totalPayoutKobo}
+                    rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                    showCents={false}
+                    usdClassName="text-xs font-bold text-sky-300 font-mono"
+                    nairaClassName="text-[10px] font-mono text-slate-400"
+                  />
                 </div>
               </div>
 
@@ -532,9 +559,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               </div>
 
               <div className="text-right">
-                <p className="text-xs font-black font-mono text-emerald-400">
-                  {formatNaira(item.earnings, false)}
-                </p>
+                <DualCurrency
+                  kobo={item.earnings}
+                  rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                  showCents={false}
+                  align="right"
+                  usdClassName="text-xs font-black font-mono text-emerald-400"
+                  nairaClassName="text-[10px] text-slate-400 font-mono"
+                />
                 <span className="text-[9px] text-slate-500">Total Yield</span>
               </div>
             </div>
@@ -576,9 +608,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   <p className="text-[10px] text-slate-400">{formatDate(tx.date)}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-bold font-mono text-sky-400">
-                    {formatNaira(tx.amountKobo)}
-                  </p>
+                  <DualCurrency
+                    kobo={tx.amountKobo}
+                    rate={adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE}
+                    align="right"
+                    usdClassName="text-xs font-bold font-mono text-sky-400"
+                    nairaClassName="text-[10px] text-slate-400 font-mono"
+                  />
                   <span
                     className={`text-[9px] font-bold ${
                       tx.status === 'Completed'

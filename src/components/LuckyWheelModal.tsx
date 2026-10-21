@@ -288,15 +288,15 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
 
           {/* Detailed Progress Bars */}
           <div className="space-y-1.5 pt-1 border-t border-slate-800/80 text-[11px]">
-            {/* Condition 1: Direct friend buys ₦200,000+ */}
+            {/* Condition 1: Direct friend buys ₦200,000+ ($129+) */}
             <div>
               <div className="flex justify-between items-center text-[10px] text-slate-300 mb-0.5">
                 <span className="flex items-center gap-1">
                   <Users className="w-3 h-3 text-sky-400" />
-                  <span>Friend Investment (Min: ₦200,000)</span>
+                  <span>Friend Investment (Min: $129.03 / ₦200k)</span>
                 </span>
                 <span className="font-mono font-bold text-sky-300">
-                  {formatNaira(downlineMaxInvestKobo, false)} / ₦200,000
+                  ${(downlineMaxInvestKobo / 100 / 1550).toFixed(0)} / $129 (≈ {formatNaira(downlineMaxInvestKobo, false)})
                 </span>
               </div>
               <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
@@ -307,15 +307,15 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
               </div>
             </div>
 
-            {/* Condition 2: Personal user buys ₦500,000+ */}
+            {/* Condition 2: Personal user buys ₦500,000+ ($323+) */}
             <div>
               <div className="flex justify-between items-center text-[10px] text-slate-300 mb-0.5">
                 <span className="flex items-center gap-1">
                   <TrendingUp className="w-3 h-3 text-pink-400" />
-                  <span>Your Personal Capital (Min: ₦500,000)</span>
+                  <span>Personal Capital (Min: $322.58 / ₦500k)</span>
                 </span>
                 <span className="font-mono font-bold text-pink-300">
-                  {formatNaira(investedCapitalKobo, false)} / ₦500,000
+                  ${(investedCapitalKobo / 100 / 1550).toFixed(0)} / $323 (≈ {formatNaira(investedCapitalKobo, false)})
                 </span>
               </div>
               <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">

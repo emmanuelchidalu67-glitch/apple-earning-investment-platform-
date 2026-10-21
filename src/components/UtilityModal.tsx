@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, nairaToKobo } from '../utils/formatters';
+import { formatNaira, formatUsd, nairaToKobo, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import {
   X,
   Phone,
@@ -192,7 +193,12 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
         {/* Balance strip */}
         <div className="my-3 p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center text-xs">
           <span className="text-slate-400">Wallet Balance:</span>
-          <span className="font-bold font-mono text-sky-400">{formatNaira(availableBalanceKobo)}</span>
+          <DualCurrency
+            kobo={availableBalanceKobo}
+            align="right"
+            usdClassName="font-bold font-mono text-sky-400 text-xs"
+            nairaClassName="text-[10px] text-slate-400 font-mono"
+          />
         </div>
 
         {/* Error message */}
@@ -215,9 +221,14 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                 Payment Successful
               </span>
               <h4 className="text-base font-bold text-white mt-2">{receipt.title}</h4>
-              <p className="text-xl font-black font-mono text-emerald-400 mt-1">
-                {formatNaira(receipt.amountKobo)}
-              </p>
+              <div className="mt-1">
+                <DualCurrency
+                  kobo={receipt.amountKobo}
+                  align="center"
+                  usdClassName="text-xl font-black font-mono text-emerald-400"
+                  nairaClassName="text-xs font-mono text-slate-400"
+                />
+              </div>
             </div>
 
             {/* Generated Electricity Token */}

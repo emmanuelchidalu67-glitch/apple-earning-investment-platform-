@@ -1,4 +1,5 @@
-// Monetary utility functions for exact Kobo accounting
+// Monetary utility functions for exact Kobo accounting & USD Dual Currency
+export const DEFAULT_USD_EXCHANGE_RATE = 1550; // ₦1,550 = $1.00 USD
 
 export function formatNaira(koboAmount: number, showKoboDecimals = true): string {
   const naira = koboAmount / 100;
@@ -17,6 +18,35 @@ export function nairaToKobo(naira: number): number {
 
 export function koboToNaira(kobo: number): number {
   return kobo / 100;
+}
+
+export function koboToUsd(kobo: number, rate = DEFAULT_USD_EXCHANGE_RATE): number {
+  const naira = kobo / 100;
+  return naira / rate;
+}
+
+export function usdToKobo(usd: number, rate = DEFAULT_USD_EXCHANGE_RATE): number {
+  const naira = usd * rate;
+  return Math.round(naira * 100);
+}
+
+export function formatUsd(koboAmount: number, showCents = true, rate = DEFAULT_USD_EXCHANGE_RATE): string {
+  const usd = koboToUsd(koboAmount, rate);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: showCents ? 2 : 0,
+    maximumFractionDigits: showCents ? 2 : 0,
+  }).format(usd);
+}
+
+export function formatDual(koboAmount: number, showCents = true, rate = DEFAULT_USD_EXCHANGE_RATE) {
+  return {
+    usd: formatUsd(koboAmount, showCents, rate),
+    naira: formatNaira(koboAmount, false),
+    nairaWithDecimals: formatNaira(koboAmount, true),
+    approxNaira: `≈ ${formatNaira(koboAmount, false)}`,
+  };
 }
 
 export function generateReference(
