@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, formatUsd, formatDate, koboToUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { formatNaira, formatUsd, formatUsdPrecise, formatDate, koboToUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 import { DualCurrency } from './DualCurrency';
 import { UserInvestment } from '../types';
 import {
@@ -32,7 +32,9 @@ export const InvestTab: React.FC = () => {
   const {
     userInvestments,
     investedCapitalKobo,
-    verifiedEarningsKobo,
+    totalLiveProfitKobo,
+    liveAccruingKobo,
+    perSecondYieldKobo,
     availableBalanceKobo,
     adminSettings,
     setActiveTab,
@@ -65,6 +67,7 @@ export const InvestTab: React.FC = () => {
       activeInvestments.reduce((sum, i) => sum + koboToUsd(i.dailyReturnKobo, exchangeRate), 0);
     const currentCapitalUsd = koboToUsd(investedCapitalKobo, exchangeRate);
     const baseBalanceUsd = koboToUsd(availableBalanceKobo, exchangeRate);
+    const liveAccruedTodayUsd = koboToUsd(liveAccruingKobo, exchangeRate);
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
@@ -83,7 +86,7 @@ export const InvestTab: React.FC = () => {
       const daysAgo = 6 - i;
       const portfolioGrowth =
         currentCapitalUsd > 0
-          ? Number((currentCapitalUsd + dailyYieldUsd * daysAgo).toFixed(2))
+          ? Number((currentCapitalUsd + dailyYieldUsd * daysAgo + (i === 0 ? liveAccruedTodayUsd : 0)).toFixed(2))
           : Number(baseBalanceUsd.toFixed(2));
 
       dataPoints.push({
@@ -95,7 +98,7 @@ export const InvestTab: React.FC = () => {
       });
     }
     return dataPoints;
-  }, [userInvestments, investedCapitalKobo, availableBalanceKobo, exchangeRate]);
+  }, [userInvestments, investedCapitalKobo, availableBalanceKobo, liveAccruingKobo, exchangeRate]);
 
   // Helper for 24-hour cycle ticker calculation
   const get24HourTicker = (inv: UserInvestment) => {
@@ -152,7 +155,9 @@ export const InvestTab: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-base font-extrabold text-white">My Portfolio Ledger</h2>
-          <p className="text-[11px] text-sky-300 font-medium">Verified Active Yield Contracts</p>
+          <p className="text-[11px] text-sky-300 font-medium">
+            Live Accrued: {formatUsdPrecise(totalLiveProfitKobo, perSecondYieldKobo > 0 ? 4 : 2, exchangeRate)} (≈ {formatNaira(Math.round(totalLiveProfitKobo), false)})
+          </p>
         </div>
         <button
           onClick={() => setActiveTab('plans')}
@@ -340,6 +345,12 @@ export const InvestTab: React.FC = () => {
             const progressPercent = Math.min(100, Math.round((inv.daysElapsed / inv.durationDays) * 100));
             const ticker24h = get24HourTicker(inv);
             const countdownExp = getExpirationCountdown(inv.maturityDate);
+            const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+            const lastClaimMs = new Date(inv.lastClaimDate || inv.startDate).getTime();
+            const elapsedInCycleMs = Math.min(ONE_DAY_MS, Math.max(0, currentTime - lastClaimMs));
+            const liveCycleAccruedKobo =
+              inv.status === 'Active' ? (inv.dailyReturnKobo * elapsedInCycleMs) / ONE_DAY_MS : 0;
+            const totalCardEarnedKobo = inv.earnedKobo + liveCycleAccruedKobo;
 
             return (
               <div
@@ -516,14 +527,12 @@ export const InvestTab: React.FC = () => {
                 <div className="flex justify-between items-center pt-1 border-t border-slate-800/80">
                   <div>
                     <span className="text-[10px] text-slate-400">Total Accrued Profit</span>
-                    <DualCurrency
-                      kobo={inv.earnedKobo}
-                      rate={exchangeRate}
-                      prefix="+"
-                      align="left"
-                      usdClassName="text-xs font-black font-mono text-emerald-400"
-                      nairaClassName="text-[10px] text-slate-400 font-mono"
-                    />
+                    <p className="text-xs font-black font-mono text-emerald-400">
+                      +{formatUsdPrecise(totalCardEarnedKobo, inv.status === 'Active' ? 4 : 2, exchangeRate)}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      ≈ +{formatNaira(Math.round(totalCardEarnedKobo), false)}
+                    </p>
                   </div>
 
                   <div className="text-right">
@@ -601,14 +610,26 @@ export const InvestTab: React.FC = () => {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Accumulated Earnings:</span>
-                <DualCurrency
-                  kobo={selectedInvestment.earnedKobo}
-                  rate={exchangeRate}
-                  prefix="+"
-                  align="right"
-                  usdClassName="font-black font-mono text-emerald-400 text-xs"
-                  nairaClassName="text-[10px] text-slate-400 font-mono"
-                />
+                {(() => {
+                  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+                  const lastClaimMs = new Date(selectedInvestment.lastClaimDate || selectedInvestment.startDate).getTime();
+                  const elapsedInCycleMs = Math.min(ONE_DAY_MS, Math.max(0, currentTime - lastClaimMs));
+                  const liveAcc =
+                    selectedInvestment.status === 'Active'
+                      ? (selectedInvestment.dailyReturnKobo * elapsedInCycleMs) / ONE_DAY_MS
+                      : 0;
+                  const totalEarnedNow = selectedInvestment.earnedKobo + liveAcc;
+                  return (
+                    <div className="text-right">
+                      <span className="block font-black font-mono text-emerald-400 text-xs">
+                        +{formatUsdPrecise(totalEarnedNow, selectedInvestment.status === 'Active' ? 4 : 2, exchangeRate)}
+                      </span>
+                      <span className="block text-[10px] text-slate-400 font-mono">
+                        ≈ +{formatNaira(Math.round(totalEarnedNow), false)}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Starting Time:</span>

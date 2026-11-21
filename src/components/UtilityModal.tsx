@@ -26,7 +26,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
   onClose,
   initialType = 'airtime',
 }) => {
-  const { availableBalanceKobo, buyAirtime, buyDataBundle, payElectricityBill } = useApp();
+  const { availableBalanceKobo, buyAirtime, buyDataBundle, payElectricityBill, adminSettings } = useApp();
 
   const [activeTab, setActiveTab] = useState<'airtime' | 'data' | 'electricity'>(initialType);
 
@@ -61,6 +61,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
 
   if (!isOpen) return null;
 
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
   const networks = ['MTN', 'Airtel', 'Glo', '9mobile'];
   const discos = [
     'Ikeja Electric (IKEDC)',
@@ -79,23 +80,23 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
     { name: '20GB Monthly (30 Days)', amount: 8000 },
   ];
 
-  const handleAirtimeSubmit = (e: React.FormEvent) => {
+  const handleAirtimeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
     setErrorMsg(null);
     const amt = Number(airtimeAmount);
     if (!amt || amt < 100) {
-      setErrorMsg('Minimum airtime amount is ₦100.');
+      setErrorMsg(`Minimum airtime amount is ${formatUsd(10000, true, rate)} (≈ ₦100).`);
       return;
     }
 
     setIsProcessing(true);
-    setTimeout(() => {
-      const res = buyAirtime({
+    try {
+      const res = await buyAirtime({
         network: airtimeNetwork,
         phoneNumber: airtimePhone,
         amountKobo: nairaToKobo(amt),
       });
-      setIsProcessing(false);
       if (res.success) {
         setReceipt({
           title: `${airtimeNetwork} Airtime Top-Up`,
@@ -106,22 +107,24 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
       } else {
         setErrorMsg(res.error || 'Failed to complete airtime transaction');
       }
-    }, 500);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleDataSubmit = (e: React.FormEvent) => {
+  const handleDataSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
     setErrorMsg(null);
 
     setIsProcessing(true);
-    setTimeout(() => {
-      const res = buyDataBundle({
+    try {
+      const res = await buyDataBundle({
         network: dataNetwork,
         phoneNumber: dataPhone,
         bundleName: dataBundle.name,
         amountKobo: nairaToKobo(dataBundle.amount),
       });
-      setIsProcessing(false);
       if (res.success) {
         setReceipt({
           title: `${dataNetwork} Data Bundle`,
@@ -132,15 +135,18 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
       } else {
         setErrorMsg(res.error || 'Failed to complete data subscription');
       }
-    }, 500);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleElectricitySubmit = (e: React.FormEvent) => {
+  const handleElectricitySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
     setErrorMsg(null);
     const amt = Number(electricityAmount);
     if (!amt || amt < 1000) {
-      setErrorMsg('Minimum electricity payment is ₦1,000.');
+      setErrorMsg(`Minimum electricity payment is ${formatUsd(100000, true, rate)} (≈ ₦1,000).`);
       return;
     }
     if (meterNumber.length < 10) {
@@ -149,14 +155,13 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
     }
 
     setIsProcessing(true);
-    setTimeout(() => {
-      const res = payElectricityBill({
+    try {
+      const res = await payElectricityBill({
         disco,
         meterNumber,
         meterType,
         amountKobo: nairaToKobo(amt),
       });
-      setIsProcessing(false);
       if (res.success) {
         setReceipt({
           title: `${disco} Token Purchase`,
@@ -168,7 +173,9 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
       } else {
         setErrorMsg(res.error || 'Failed to process electricity payment');
       }
-    }, 600);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -195,6 +202,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
           <span className="text-slate-400">Wallet Balance:</span>
           <DualCurrency
             kobo={availableBalanceKobo}
+            rate={rate}
             align="right"
             usdClassName="font-bold font-mono text-sky-400 text-xs"
             nairaClassName="text-[10px] text-slate-400 font-mono"
@@ -224,6 +232,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
               <div className="mt-1">
                 <DualCurrency
                   kobo={receipt.amountKobo}
+                  rate={rate}
                   align="center"
                   usdClassName="text-xl font-black font-mono text-emerald-400"
                   nairaClassName="text-xs font-mono text-slate-400"
@@ -348,7 +357,12 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (₦)</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-300">Amount (₦)</label>
+                    <span className="text-[11px] font-mono font-bold text-emerald-400">
+                      {formatUsd(nairaToKobo(Number(airtimeAmount) || 0), true, rate)}
+                    </span>
+                  </div>
                   <input
                     type="number"
                     value={airtimeAmount}
@@ -361,9 +375,11 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                 <button
                   type="submit"
                   disabled={isProcessing}
-                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider"
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider disabled:opacity-60 cursor-pointer"
                 >
-                  {isProcessing ? 'Processing Recharge...' : 'Pay Airtime Now'}
+                  {isProcessing
+                    ? 'Processing Recharge...'
+                    : `Pay ${formatUsd(nairaToKobo(Number(airtimeAmount) || 0), true, rate)} (≈ ₦${(Number(airtimeAmount) || 0).toLocaleString()})`}
                 </button>
               </form>
             )}
@@ -414,7 +430,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                   >
                     {dataBundles.map((b) => (
                       <option key={b.name} value={b.name}>
-                        {b.name} — ₦{b.amount.toLocaleString()}
+                        {b.name} — {formatUsd(nairaToKobo(b.amount), true, rate)} (≈ ₦{b.amount.toLocaleString()})
                       </option>
                     ))}
                   </select>
@@ -423,9 +439,11 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                 <button
                   type="submit"
                   disabled={isProcessing}
-                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider"
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider disabled:opacity-60 cursor-pointer"
                 >
-                  {isProcessing ? 'Activating Bundle...' : `Pay ₦${dataBundle.amount.toLocaleString()}`}
+                  {isProcessing
+                    ? 'Activating Bundle...'
+                    : `Pay ${formatUsd(nairaToKobo(dataBundle.amount), true, rate)} (≈ ₦${dataBundle.amount.toLocaleString()})`}
                 </button>
               </form>
             )}
@@ -474,7 +492,12 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (₦)</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-semibold text-slate-300">Amount (₦)</label>
+                      <span className="text-[10px] font-mono font-bold text-emerald-400">
+                        {formatUsd(nairaToKobo(Number(electricityAmount) || 0), true, rate)}
+                      </span>
+                    </div>
                     <input
                       type="number"
                       value={electricityAmount}
@@ -500,7 +523,7 @@ export const UtilityModal: React.FC<UtilityModalProps> = ({
                 <button
                   type="submit"
                   disabled={isProcessing}
-                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider"
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase tracking-wider disabled:opacity-60 cursor-pointer"
                 >
                   {isProcessing ? 'Generating Power Token...' : 'Generate Electricity Token'}
                 </button>

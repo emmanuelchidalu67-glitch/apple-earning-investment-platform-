@@ -50,6 +50,9 @@ const MainAppContent: React.FC = () => {
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showLuckyWheelModal, setShowLuckyWheelModal] = useState(false);
 
+  const [isInvesting, setIsInvesting] = useState(false);
+  const [investErrorToast, setInvestErrorToast] = useState<string | null>(null);
+
   // 1. Splash Showcase Presentation
   if (showSplash) {
     return (
@@ -86,14 +89,22 @@ const MainAppContent: React.FC = () => {
     setShowHistoryModal(true);
   };
 
-  const handleInvestInPlan = (planId: string) => {
-    const res = investInPlan(planId);
-    if (res.success) {
-      setActiveTab('invest');
-    } else {
-      if (res.error?.includes('deposit')) {
+  const handleInvestInPlan = async (planId: string) => {
+    if (isInvesting) return;
+    setIsInvesting(true);
+    setInvestErrorToast(null);
+    try {
+      const res = await investInPlan(planId);
+      if (res.success) {
+        setActiveTab('invest');
+      } else if (res.error?.toLowerCase().includes('deposit') || res.error?.toLowerCase().includes('insufficient')) {
         setShowDepositModal(true);
+      } else if (res.error) {
+        setInvestErrorToast(res.error);
+        setTimeout(() => setInvestErrorToast(null), 4000);
       }
+    } finally {
+      setIsInvesting(false);
     }
   };
 
@@ -101,6 +112,11 @@ const MainAppContent: React.FC = () => {
     <div className="min-h-screen bg-[#030812] text-slate-100 flex justify-center">
       {/* Mobile-first Shell */}
       <div className="w-full max-w-md min-h-screen bg-gradient-to-b from-[#071328] via-[#091833] to-[#040c1a] border-x border-slate-800/80 shadow-[0_0_50px_rgba(0,0,0,0.8)] relative flex flex-col">
+        {investErrorToast && (
+          <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[90%] px-4 py-2.5 rounded-2xl bg-pink-950/95 border border-pink-500/50 text-pink-200 text-xs font-bold shadow-2xl text-center">
+            {investErrorToast}
+          </div>
+        )}
         {/* Top Sticky Header */}
         <Header onOpenNotifications={() => setShowNotificationsModal(true)} />
 

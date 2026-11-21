@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatDate } from '../utils/formatters';
 import {
@@ -46,7 +46,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   onOpenNotifications,
   onOpenAdminPortal,
 }) => {
-  const { user, logout, setActiveTab, updateWithdrawalPin, updateProfile } = useApp();
+  const { user, logout, setActiveTab, updateWithdrawalPin, updateProfile, updatePassword } = useApp();
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
@@ -82,6 +82,11 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const [supportMessage, setSupportMessage] = useState('');
   const [ticketCreated, setTicketCreated] = useState(false);
 
+  useEffect(() => {
+    setEditFullName(user?.fullName || '');
+    setEditPhone(user?.phone || '');
+  }, [user?.fullName, user?.phone]);
+
   const handleCopy = (text: string, label: string) => {
     try {
       navigator.clipboard.writeText(text);
@@ -93,21 +98,23 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editFullName.trim()) return;
-    updateProfile({
+    const res = await updateProfile({
       fullName: editFullName.trim(),
       phone: editPhone.trim() || user?.phone,
     });
-    setProfileSaveSuccess('Profile details saved successfully!');
-    setTimeout(() => {
-      setProfileSaveSuccess(null);
-      setShowProfileSettingsModal(false);
-    }, 1500);
+    if (res.success) {
+      setProfileSaveSuccess('Profile details saved successfully!');
+      setTimeout(() => {
+        setProfileSaveSuccess(null);
+        setShowProfileSettingsModal(false);
+      }, 1500);
+    }
   };
 
-  const handlePasswordUpdate = (e: React.FormEvent) => {
+  const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError(null);
     if (newPassword.length < 6) {
@@ -116,6 +123,11 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     }
     if (newPassword !== confirmPassword) {
       setPasswordError('Passwords do not match.');
+      return;
+    }
+    const res = await updatePassword(oldPassword, newPassword);
+    if (!res.success) {
+      setPasswordError(res.error || 'Failed to update password.');
       return;
     }
     setPasswordSuccess('Security password updated and re-encrypted successfully!');
@@ -128,7 +140,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     }, 1500);
   };
 
-  const handlePinUpdate = (e: React.FormEvent) => {
+  const handlePinUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setPinError(null);
     if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
@@ -140,7 +152,11 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       return;
     }
 
-    updateWithdrawalPin(newPin);
+    const res = await updateWithdrawalPin(newPin);
+    if (!res.success) {
+      setPinError(res.error || 'Failed to update PIN.');
+      return;
+    }
     setPinSuccess('Your 4-digit withdrawal PIN was updated successfully!');
     setTimeout(() => {
       setShowPinModal(false);

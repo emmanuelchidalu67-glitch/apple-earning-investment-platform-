@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatNaira, formatUsd, nairaToKobo, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 import { DualCurrency } from './DualCurrency';
@@ -37,8 +37,18 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   const [confirmedReference, setConfirmedReference] = useState<string>('');
   const [confirmedAmountKobo, setConfirmedAmountKobo] = useState<number>(0);
   const [confirmedBank, setConfirmedBank] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!selectedBankId || !bankAccounts.some((b) => b.id === selectedBankId)) {
+      const def = bankAccounts.find((b) => b.isDefault)?.id || bankAccounts[0]?.id || '';
+      setSelectedBankId(def);
+    }
+  }, [bankAccounts, selectedBankId]);
 
   if (!isOpen) return null;
+
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
   const currentDay = new Date().getDay();
   const isWeekend = currentDay === 0 || currentDay === 6; // 0 is Sunday, 6 is Saturday
@@ -67,11 +77,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     const maxKobo = 5000000 * 100; // ₦5,000,000
 
     if (amountKobo < minKobo) {
-      setErrorMessage('Minimum withdrawal amount is ₦1,000.');
+      setErrorMessage(`Minimum withdrawal amount is ${formatUsd(minKobo, true, rate)} (≈ ₦1,000).`);
       return;
     }
     if (amountKobo > maxKobo) {
-      setErrorMessage('Maximum single withdrawal limit is ₦5,000,000.');
+      setErrorMessage(`Maximum single withdrawal limit is ${formatUsd(maxKobo, false, rate)} (≈ ₦5,000,000).`);
       return;
     }
     if (amountKobo > availableBalanceKobo) {
@@ -86,8 +96,9 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     setStep(2);
   };
 
-  const handleStep2Submit = (e: React.FormEvent) => {
+  const handleStep2Submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
 
     if (!selectedBankId) {
@@ -100,21 +111,26 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     }
 
     const selectedBank = bankAccounts.find((b) => b.id === selectedBankId);
-    const res = submitWithdrawal({
-      amountKobo,
-      bankAccountId: selectedBankId,
-      withdrawalPin,
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await submitWithdrawal({
+        amountKobo,
+        bankAccountId: selectedBankId,
+        withdrawalPin,
+      });
 
-    if (!res.success) {
-      setErrorMessage(res.error || 'Withdrawal submission failed');
-      return;
+      if (!res.success) {
+        setErrorMessage(res.error || 'Withdrawal submission failed');
+        return;
+      }
+
+      setConfirmedReference(res.reference || 'WTH-PENDING');
+      setConfirmedAmountKobo(amountKobo);
+      setConfirmedBank(selectedBank ? `${selectedBank.bankName} (${selectedBank.accountNumber})` : 'Nigerian Bank');
+      setStep(3);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setConfirmedReference(res.reference || 'WTH-PENDING');
-    setConfirmedAmountKobo(amountKobo);
-    setConfirmedBank(selectedBank ? `${selectedBank.bankName} (${selectedBank.accountNumber})` : 'Nigerian Bank');
-    setStep(3);
   };
 
   const handleResetAndClose = () => {
@@ -400,9 +416,10 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-sky-600 text-white font-bold text-xs tracking-wider uppercase shadow-md shadow-pink-500/25"
+                disabled={isSubmitting}
+                className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-sky-600 text-white font-bold text-xs tracking-wider uppercase shadow-md shadow-pink-500/25 disabled:opacity-60 cursor-pointer"
               >
-                Confirm Withdrawal
+                {isSubmitting ? 'Submitting...' : 'Confirm Withdrawal'}
               </button>
             </div>
           </form>

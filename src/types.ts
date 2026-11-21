@@ -23,6 +23,7 @@ export interface UserProfile {
   isWithdrawalBanned?: boolean;
   isSuspended?: boolean;
   whatsappPhone?: string;
+  lastLoginAt?: string;
 }
 
 export interface BankAccount {

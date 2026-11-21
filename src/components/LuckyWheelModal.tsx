@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira } from '../utils/formatters';
+import { formatNaira, formatUsd, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 import { SpinPrizeItem } from '../types';
 import {
   X,
@@ -156,7 +156,7 @@ export const PrizeIllustration: React.FC<{ category: SpinPrizeItem['category']; 
 };
 
 export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClose }) => {
-  const { user, investedCapitalKobo, allUsers, transactions, adminSettings, addNotification, updateProfile } = useApp();
+  const { user, investedCapitalKobo, downlineMaxInvestKobo, adminSettings, recordWheelSpin } = useApp();
 
   const [isSpinning, setIsSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
@@ -164,8 +164,9 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
 
   if (!isOpen) return null;
 
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
+
   // Strict Eligibility Rule + Admin Spin Balance:
-  // "make admin to be able to edit user spin balance"
   const minFriendInvestKobo = adminSettings.wheelMinFriendInvestKobo || 200000 * 100; // ₦200,000
   const minUserInvestKobo = adminSettings.wheelMinUserInvestKobo || 500000 * 100; // ₦500,000
 
@@ -176,29 +177,11 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
   const userQualified = investedCapitalKobo >= minUserInvestKobo;
 
   // 3. Direct downline check
-  const userReferralCode = user?.referralCode || '';
-  const myDownlines = allUsers.filter((u) => u.referredBy === userReferralCode);
-  const myDownlineIds = myDownlines.map((d) => d.id);
-
-  // Find max friend investment
-  const downlineMaxInvestKobo = transactions
-    .filter(
-      (t) =>
-        myDownlineIds.includes(t.userId) &&
-        t.type === 'investment' &&
-        t.status === 'Completed'
-    )
-    .reduce((max, t) => Math.max(max, t.amountKobo), 0);
-
   const downlineQualified = downlineMaxInvestKobo >= minFriendInvestKobo;
   const isEligible = userSpinTickets > 0 || userQualified || downlineQualified;
 
   const handleSpin = () => {
     if (!isEligible || isSpinning) return;
-
-    if (user && user.spinBalance && user.spinBalance > 0) {
-      updateProfile({ spinBalance: user.spinBalance - 1 });
-    }
 
     setIsSpinning(true);
     setWonPrize(null);
@@ -214,17 +197,20 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
     const finalRotation = rotation + targetAngle;
     setRotation(finalRotation);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsSpinning(false);
       setWonPrize(selectedPrize);
 
-      if (selectedPrize.category !== 'try_again') {
-        addNotification(
-          `Lucky Wheel: ${selectedPrize.name} Won!`,
-          `Congratulations! You unlocked the ${selectedPrize.name} (Valued at ₦${selectedPrize.marketValueNaira.toLocaleString()}) on the Apple Card Lucky Wheel! Our verification desk will dispatch your delivery confirmation.`,
-          'reward'
-        );
-      }
+      const prizeKobo = selectedPrize.marketValueNaira * 100;
+      const prizeUsdStr = formatUsd(prizeKobo, true, rate);
+      const prizeNairaStr = formatNaira(prizeKobo, false);
+
+      await recordWheelSpin(
+        selectedPrize.category !== 'try_again' ? `Lucky Wheel: ${selectedPrize.name} Won!` : undefined,
+        selectedPrize.category !== 'try_again'
+          ? `Congratulations! You unlocked the ${selectedPrize.name} (Valued at ${prizeUsdStr} / ≈ ${prizeNairaStr}) on the Apple Card Lucky Wheel! Our verification desk will dispatch your delivery confirmation.`
+          : undefined
+      );
     }, 4500);
   };
 
@@ -282,21 +268,21 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
                 isEligible ? 'bg-emerald-900/80 text-emerald-300' : 'bg-slate-950 text-slate-400'
               }`}
             >
-              {isEligible ? '1 Free Spin Ready' : '0 Spins'}
+              {userSpinTickets > 0 ? `${userSpinTickets} Ticket(s) Ready` : isEligible ? '1 Free Spin Ready' : '0 Spins'}
             </span>
           </div>
 
           {/* Detailed Progress Bars */}
           <div className="space-y-1.5 pt-1 border-t border-slate-800/80 text-[11px]">
-            {/* Condition 1: Direct friend buys ₦200,000+ ($129+) */}
+            {/* Condition 1: Direct friend buys minFriendInvestKobo */}
             <div>
               <div className="flex justify-between items-center text-[10px] text-slate-300 mb-0.5">
                 <span className="flex items-center gap-1">
                   <Users className="w-3 h-3 text-sky-400" />
-                  <span>Friend Investment (Min: $129.03 / ₦200k)</span>
+                  <span>Friend Investment (Min: {formatUsd(minFriendInvestKobo, false, rate)})</span>
                 </span>
                 <span className="font-mono font-bold text-sky-300">
-                  ${(downlineMaxInvestKobo / 100 / 1550).toFixed(0)} / $129 (≈ {formatNaira(downlineMaxInvestKobo, false)})
+                  {formatUsd(downlineMaxInvestKobo, false, rate)} / {formatUsd(minFriendInvestKobo, false, rate)} (≈ {formatNaira(downlineMaxInvestKobo, false)})
                 </span>
               </div>
               <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
@@ -307,15 +293,15 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
               </div>
             </div>
 
-            {/* Condition 2: Personal user buys ₦500,000+ ($323+) */}
+            {/* Condition 2: Personal user buys minUserInvestKobo */}
             <div>
               <div className="flex justify-between items-center text-[10px] text-slate-300 mb-0.5">
                 <span className="flex items-center gap-1">
                   <TrendingUp className="w-3 h-3 text-pink-400" />
-                  <span>Personal Capital (Min: $322.58 / ₦500k)</span>
+                  <span>Personal Capital (Min: {formatUsd(minUserInvestKobo, false, rate)})</span>
                 </span>
                 <span className="font-mono font-bold text-pink-300">
-                  ${(investedCapitalKobo / 100 / 1550).toFixed(0)} / $323 (≈ {formatNaira(investedCapitalKobo, false)})
+                  {formatUsd(investedCapitalKobo, false, rate)} / {formatUsd(minUserInvestKobo, false, rate)} (≈ {formatNaira(investedCapitalKobo, false)})
                 </span>
               </div>
               <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
@@ -400,9 +386,14 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
             </div>
             <p className="text-xs text-slate-300">{wonPrize.subtitle}</p>
             {wonPrize.category !== 'try_again' && (
-              <p className="text-xs font-bold font-mono text-emerald-400">
-                Market Worth: ₦{wonPrize.marketValueNaira.toLocaleString()}
-              </p>
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold font-mono text-emerald-400">
+                  Market Worth: {formatUsd(wonPrize.marketValueNaira * 100, true, rate)}
+                </p>
+                <p className="text-[10px] font-mono text-slate-400">
+                  ≈ {formatNaira(wonPrize.marketValueNaira * 100, false)}
+                </p>
+              </div>
             )}
           </div>
         )}
@@ -430,7 +421,7 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
           ) : (
             <>
               <Lock className="w-4 h-4" />
-              <span>Locked (Unlock Via Friends or ₦500k Invest)</span>
+              <span>Locked (Unlock Via Friends or {formatUsd(minUserInvestKobo, false, rate)} Invest)</span>
             </>
           )}
         </button>
@@ -451,9 +442,14 @@ export const LuckyWheelModal: React.FC<LuckyWheelModalProps> = ({ isOpen, onClos
                 </div>
                 <div className="truncate">
                   <p className="text-[11px] font-bold text-white truncate">{item.name}</p>
-                  <p className="text-[9px] font-mono text-sky-400">
-                    {item.category === 'try_again' ? 'Bonus Spin' : `₦${item.marketValueNaira.toLocaleString()}`}
+                  <p className="text-[9px] font-mono text-sky-400 font-bold">
+                    {item.category === 'try_again' ? 'Bonus Spin' : formatUsd(item.marketValueNaira * 100, true, rate)}
                   </p>
+                  {item.category !== 'try_again' && (
+                    <p className="text-[8px] font-mono text-slate-400">
+                      ≈ {formatNaira(item.marketValueNaira * 100, false)}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}

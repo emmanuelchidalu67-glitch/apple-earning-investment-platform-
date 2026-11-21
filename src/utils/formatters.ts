@@ -40,6 +40,16 @@ export function formatUsd(koboAmount: number, showCents = true, rate = DEFAULT_U
   }).format(usd);
 }
 
+export function formatUsdPrecise(koboAmount: number, decimals = 4, rate = DEFAULT_USD_EXCHANGE_RATE): string {
+  const usd = koboToUsd(koboAmount, rate);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(usd);
+}
+
 export function formatDual(koboAmount: number, showCents = true, rate = DEFAULT_USD_EXCHANGE_RATE) {
   return {
     usd: formatUsd(koboAmount, showCents, rate),

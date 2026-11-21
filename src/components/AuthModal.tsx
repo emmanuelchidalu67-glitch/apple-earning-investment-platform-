@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { authView, setAuthView, login, signup, verifyOtp } = useApp();
+  const { authView, setAuthView, login, signup } = useApp();
 
   const [isLoginTab, setIsLoginTab] = useState(authView === 'login');
 
@@ -40,13 +40,9 @@ export const AuthModal: React.FC = () => {
   const [signupPassword, setSignupPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [withdrawalPin, setWithdrawalPin] = useState('');
-  const [referralCodeInput, setReferralCodeInput] = useState('');
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
-
-  // OTP state
-  const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
 
   // Recovery state
   const [recoveryEmail, setRecoveryEmail] = useState('');
@@ -63,21 +59,21 @@ export const AuthModal: React.FC = () => {
       c.dialCode.includes(countrySearch)
   );
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     setIsLoading(true);
-
-    setTimeout(() => {
-      const res = login(loginIdentifier, loginPassword);
-      setIsLoading(false);
+    try {
+      const res = await login(loginIdentifier, loginPassword);
       if (!res.success) {
         setFormError(res.error || 'Failed to authenticate');
       }
-    }, 400);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSignupSubmit = (e: React.FormEvent) => {
+  const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -98,54 +94,25 @@ export const AuthModal: React.FC = () => {
       return;
     }
 
+    const urlRef = new URLSearchParams(window.location.search).get('ref')?.trim() || undefined;
+
     setIsLoading(true);
-    setTimeout(() => {
-      const res = signup({
+    try {
+      const res = await signup({
         fullName,
         email: signupEmail,
         phone: `${selectedCountry.dialCode}${signupPhone}`,
         countryCode: selectedCountry.dialCode,
         withdrawalPin,
         password: signupPassword,
-        referralCode: referralCodeInput || undefined,
+        referralCode: urlRef,
       });
-      setIsLoading(false);
       if (!res.success) {
         setFormError(res.error || 'Registration failed');
       }
-    }, 450);
-  };
-
-  const handleOtpChange = (index: number, val: string) => {
-    if (!/^\d*$/.test(val)) return;
-    const newOtp = [...otpCode];
-    newOtp[index] = val.slice(-1);
-    setOtpCode(newOtp);
-
-    // Auto-focus next input
-    if (val && index < 5) {
-      const nextInput = document.getElementById(`otp-${index + 1}`);
-      nextInput?.focus();
-    }
-  };
-
-  const handleOtpSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    const fullCode = otpCode.join('');
-    if (fullCode.length !== 6) {
-      setFormError('Please enter the complete 6-digit OTP code.');
-      return;
-    }
-
-    setIsLoading(true);
-    setTimeout(() => {
-      const res = verifyOtp(fullCode);
+    } finally {
       setIsLoading(false);
-      if (!res.success) {
-        setFormError(res.error || 'Invalid OTP code');
-      }
-    }, 500);
+    }
   };
 
   const handleRecoverySubmit = (e: React.FormEvent) => {
@@ -249,50 +216,7 @@ export const AuthModal: React.FC = () => {
           </div>
         )}
 
-        {/* VIEW 2: VERIFY OTP (Registration Step) */}
-        {authView === 'verify_otp' && (
-          <div className="space-y-4">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-full bg-sky-500/10 border border-sky-500/30 flex items-center justify-center mx-auto mb-3">
-                <ShieldCheck className="w-6 h-6 text-sky-400" />
-              </div>
-              <h3 className="text-lg font-bold text-white">Verify Phone & Email</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                We sent a 6-digit confirmation code. Please enter it below to activate your account and claim your ₦800 welcome bonus.
-              </p>
-              <div className="inline-block mt-2 px-3 py-1 rounded-full bg-slate-800 text-[11px] text-sky-300 font-mono">
-                Code: 123456 (Demo instant OTP)
-              </div>
-            </div>
-
-            <form onSubmit={handleOtpSubmit} className="space-y-5">
-              <div className="flex justify-between gap-2">
-                {otpCode.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    id={`otp-${idx}`}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(idx, e.target.value)}
-                    className="w-11 h-12 text-center text-lg font-bold bg-slate-900 border border-slate-700 rounded-xl text-sky-300 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  />
-                ))}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-pink-600 hover:from-sky-400 hover:to-pink-500 text-white font-bold text-sm tracking-wider uppercase shadow-md shadow-sky-500/20 cursor-pointer"
-              >
-                {isLoading ? 'Verifying...' : 'Verify & Continue'}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* VIEW 3: LOGIN & SIGNUP TABS */}
+        {/* VIEW 2: LOGIN & SIGNUP TABS */}
         {(authView === 'login' || authView === 'signup') && (
           <>
             {/* Top Switcher Tab: Sign Up on the Left, Login on the Right */}
@@ -607,16 +531,16 @@ export const AuthModal: React.FC = () => {
             </div>
             <div className="text-xs text-slate-300 space-y-2">
               <p>
-                1. <strong>Investment Terms:</strong> Capital yields are calculated on a verified 45-day cycle. All withdrawals are subject to verification and Nigerian financial settlement rules.
+                1. <strong>Investment Terms:</strong> Capital yields are calculated on a verified 45-day cycle with automatic 24-hour payouts.
               </p>
               <p>
-                2. <strong>Welcome Bonus:</strong> The ₦800 welcome bonus is granted once per verified legal person and becomes unlocked upon portfolio activation.
+                2. <strong>Welcome Bonus:</strong> The $0.52 (≈ ₦800) welcome bonus is credited once per registered account immediately upon activation.
               </p>
               <p>
                 3. <strong>Anti-Fraud:</strong> Multiple registrations, duplicate accounts, and fictitious bank entries are immediately frozen.
               </p>
               <p>
-                4. <strong>Withdrawals:</strong> Standard 5% financial settlement fee applies to processed withdrawals.
+                4. <strong>Withdrawals:</strong> Standard 15% financial settlement fee applies to processed withdrawals (Monday - Friday).
               </p>
             </div>
             <button

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 export const TeamTab: React.FC = () => {
-  const { user, referralStats, allUsers, adminSettings } = useApp();
+  const { user, referralStats, downlines, adminSettings } = useApp();
 
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -24,7 +24,9 @@ export const TeamTab: React.FC = () => {
   const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
   const referralCode = user?.referralCode || 'APPLE77';
-  const referralLink = `https://applecard.ng/register?ref=${referralCode}`;
+  const referralLink = adminSettings.baseReferralUrl
+    ? `${adminSettings.baseReferralUrl}${referralCode}`
+    : `${window.location.origin}/?ref=${referralCode}`;
 
   const copyCode = () => {
     navigator.clipboard.writeText(referralCode);
@@ -38,8 +40,8 @@ export const TeamTab: React.FC = () => {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  // Real registered downlines
-  const directDownlines = user ? allUsers.filter((u) => u.referredBy === referralCode) : [];
+  // Real registered downlines hydrated securely from server
+  const directDownlines = downlines;
 
   return (
     <div className="pb-24 pt-2 px-4 space-y-4">
@@ -127,7 +129,7 @@ export const TeamTab: React.FC = () => {
           {/* Tier 1 */}
           <div className="p-3 rounded-2xl bg-slate-900/90 border border-sky-500/40 text-center space-y-1">
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold">
-              Tier 1 • 10%
+              Tier 1 • {referralStats.tier1.percentage}%
             </span>
             <p className="text-lg font-black text-white font-mono mt-1">
               {referralStats.tier1.membersCount}
@@ -147,7 +149,7 @@ export const TeamTab: React.FC = () => {
           {/* Tier 2 */}
           <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 text-center space-y-1">
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold">
-              Tier 2 • 2%
+              Tier 2 • {referralStats.tier2.percentage}%
             </span>
             <p className="text-lg font-black text-white font-mono mt-1">
               {referralStats.tier2.membersCount}
@@ -167,7 +169,7 @@ export const TeamTab: React.FC = () => {
           {/* Tier 3 */}
           <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 text-center space-y-1">
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-bold">
-              Tier 3 • 1%
+              Tier 3 • {referralStats.tier3.percentage}%
             </span>
             <p className="text-lg font-black text-white font-mono mt-1">
               {referralStats.tier3.membersCount}
@@ -195,7 +197,7 @@ export const TeamTab: React.FC = () => {
               Your Registered Downlines ({directDownlines.length})
             </h3>
           </div>
-          <span className="text-[10px] text-emerald-400 font-semibold">Tier 1 • 10% Earned</span>
+          <span className="text-[10px] text-emerald-400 font-semibold">Tier 1 • {referralStats.tier1.percentage}% Earned</span>
         </div>
 
         {directDownlines.length === 0 ? (

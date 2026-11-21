@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, maskPhone } from '../utils/formatters';
+import { formatNaira, formatUsd, maskPhone, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 
 interface TickerItem {
   id: string;
@@ -14,37 +14,39 @@ interface TickerItem {
 }
 
 export const HomeScrollingTicker: React.FC = () => {
-  const { transactions, plans } = useApp();
+  const { publicFeedWithdrawals, plans, adminSettings } = useApp();
   const [activeFilter, setActiveFilter] = useState<'all' | 'yields' | 'withdrawals'>('all');
   const [isPaused, setIsPaused] = useState(false);
+
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
   // Dynamic VIP Yield items from loaded plans
   const yieldItems: TickerItem[] = plans.map((plan) => {
     const dailyPercent = ((plan.dailyReturnKobo / plan.capitalKobo) * 100).toFixed(1);
-    const usdDaily = ((plan.dailyReturnKobo / 100) / 1550).toFixed(2);
+    const usdDaily = formatUsd(plan.dailyReturnKobo, true, rate);
     return {
       id: `yield-${plan.id}`,
       type: 'yield',
       icon: '⚡',
       badge: `${plan.name}`,
       title: `Daily ROI: +${dailyPercent}%`,
-      detail: `$${usdDaily} (≈ ${formatNaira(plan.dailyReturnKobo, false)})/day`,
+      detail: `${usdDaily} (≈ ${formatNaira(plan.dailyReturnKobo, false)})/day`,
       highlight: `${plan.badge}`,
       color: 'border-sky-500/30 text-sky-300 bg-sky-950/40',
     };
   });
 
-  // Recent simulated + real Nigerian bank withdrawal feed
-  const realCompletedWithdrawals = transactions
+  // Recent real completed withdrawals from public feed + showcase items
+  const realCompletedWithdrawals = publicFeedWithdrawals
     .filter((t) => t.type === 'withdrawal' && t.status === 'Completed')
     .map((t, idx) => ({
       id: `real-wth-${t.id}-${idx}`,
       type: 'withdrawal' as const,
       icon: '💸',
       badge: 'Disbursed',
-      title: `${t.bankDetails?.bankName || 'Nigerian Bank'}`,
-      detail: `$${((t.amountKobo / 100) / 1550).toFixed(2)} (≈ ${formatNaira(t.amountKobo, false)})`,
-      highlight: 'Just now',
+      title: `${t.bankDetails?.bankName || 'Verified Payout'}`,
+      detail: `${formatUsd(t.amountKobo, true, rate)} (≈ ${formatNaira(t.amountKobo, false)})`,
+      highlight: 'Verified Paid',
       color: 'border-emerald-500/30 text-emerald-300 bg-emerald-950/40',
     }));
 

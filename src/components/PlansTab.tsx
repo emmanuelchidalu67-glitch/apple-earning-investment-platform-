@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 interface PlansTabProps {
-  onInvestInPlan: (planId: string) => void;
+  onInvestInPlan: (planId: string) => Promise<void> | void;
 }
 
 export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
@@ -26,6 +26,7 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
   const [selectedPlanForReview, setSelectedPlanForReview] = useState<InvestmentPlan | null>(null);
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isActivating, setIsActivating] = useState(false);
 
   const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
@@ -35,8 +36,8 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
     setSelectedPlanForReview(plan);
   };
 
-  const handleConfirmInvestment = () => {
-    if (!selectedPlanForReview) return;
+  const handleConfirmInvestment = async () => {
+    if (!selectedPlanForReview || isActivating) return;
     if (!agreedTerms) {
       setErrorMessage('Please confirm agreement to activate this investment contract.');
       return;
@@ -52,8 +53,13 @@ export const PlansTab: React.FC<PlansTabProps> = ({ onInvestInPlan }) => {
       return;
     }
 
-    onInvestInPlan(selectedPlanForReview.id);
-    setSelectedPlanForReview(null);
+    setIsActivating(true);
+    try {
+      await onInvestInPlan(selectedPlanForReview.id);
+      setSelectedPlanForReview(null);
+    } finally {
+      setIsActivating(false);
+    }
   };
 
   return (

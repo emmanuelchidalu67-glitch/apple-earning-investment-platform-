@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, formatDate, nairaToKobo } from '../utils/formatters';
+import { formatNaira, formatUsd, formatDate, nairaToKobo, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { DualCurrency } from './DualCurrency';
 import { InvestmentPlan, UserProfile } from '../types';
 import {
   ShieldCheck,
@@ -31,6 +32,7 @@ import {
   DollarSign,
   Award,
   Check,
+  Search,
 } from 'lucide-react';
 
 interface AdminPortalProps {
@@ -39,7 +41,11 @@ interface AdminPortalProps {
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) => {
   const {
-    transactions,
+    adminTransactions,
+    adminInvestments,
+    adminTopUpCodes,
+    adminStats,
+    refreshAdminDashboard,
     adminApproveDeposit,
     adminRejectDeposit,
     adminApproveWithdrawal,
@@ -48,25 +54,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     adminUpdatePlan,
     adminCreateTopUpCode,
     auditLogs,
-    availableBalanceKobo,
-    investedCapitalKobo,
-    pendingWithdrawalKobo,
     allUsers,
     adminSettings,
     updateAdminSettings,
     adminToggleUserVerification,
-    addNotification,
     adminUpdateUserFinancials,
     adminDeleteUserInvestments,
     adminDeleteUser,
     adminToggleUserWithdrawalBan,
     adminToggleUserSuspension,
     adminPublishNotification,
-    userInvestments,
-    bankAccounts,
   } = useApp();
 
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
+
   const [adminTab, setAdminTab] = useState<'overview' | 'users' | 'controls' | 'deposits' | 'withdrawals' | 'plans' | 'codes' | 'audit'>('overview');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [actionBanner, setActionBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Reject modal state
   const [rejectTxId, setRejectTxId] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
   const [newCodeExpiry, setNewCodeExpiry] = useState('2026-12-31');
   const [newCodeDesc, setNewCodeDesc] = useState('Executive VIP incentive');
   const [codeSuccessMsg, setCodeSuccessMsg] = useState<string | null>(null);
+  const [codeErrorMsg, setCodeErrorMsg] = useState<string | null>(null);
 
   // System Controls & Social Links State
   const [whatsappInput, setWhatsappInput] = useState(adminSettings.whatsappGroupUrl || '');
@@ -99,6 +105,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
   const [depositAccountNameInput, setDepositAccountNameInput] = useState(adminSettings.depositAccountName || 'APPLE CARD INVESTMENT TECH NIGERIA');
   const [savedSettingsNotice, setSavedSettingsNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    setWhatsappInput(adminSettings.whatsappGroupUrl || '');
+    setTelegramInput(adminSettings.telegramChannelUrl || '');
+    setReferralBaseInput(adminSettings.baseReferralUrl || '');
+    setUsdtAddressInput(adminSettings.usdtBep20Address || '');
+    setUsdtRateInput((adminSettings.usdtExchangeRateNaira || 1550).toString());
+    setWheelFriendInput(((adminSettings.wheelMinFriendInvestKobo || 20000000) / 100).toString());
+    setWheelUserInput(((adminSettings.wheelMinUserInvestKobo || 50000000) / 100).toString());
+    setDepositBankInput(adminSettings.depositBankName || 'Moniepoint Microfinance Bank');
+    setDepositAccountNumInput(adminSettings.depositAccountNumber || '8129940182');
+    setDepositAccountNameInput(adminSettings.depositAccountName || 'APPLE CARD INVESTMENT TECH NIGERIA');
+  }, [adminSettings]);
+
   // User Management & Financial Editor State
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<UserProfile | null>(null);
   const [editBalNaira, setEditBalNaira] = useState('');
@@ -111,6 +130,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
   const [editPhone, setEditPhone] = useState('');
   const [editRole, setEditRole] = useState<'user' | 'admin'>('user');
   const [userEditNotice, setUserEditNotice] = useState<string | null>(null);
+  const [userEditError, setUserEditError] = useState<string | null>(null);
   const [copiedTextNotice, setCopiedTextNotice] = useState<string | null>(null);
   const [confirmDeleteInv, setConfirmDeleteInv] = useState(false);
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(false);
@@ -121,23 +141,57 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
   const [broadcastType, setBroadcastType] = useState<'system' | 'reward' | 'security' | 'transaction'>('system');
   const [broadcastSuccess, setBroadcastSuccess] = useState<string | null>(null);
 
-  const pendingDeposits = transactions.filter((t) => t.type === 'deposit' && t.status === 'Pending');
-  const pendingWithdrawals = transactions.filter((t) => t.type === 'withdrawal' && t.status === 'Pending');
+  const pendingDeposits = adminTransactions.filter((t) => t.type === 'deposit' && t.status === 'Pending');
+  const pendingWithdrawals = adminTransactions.filter((t) => t.type === 'withdrawal' && t.status === 'Pending');
 
-  const totalDepositsApprovedKobo = transactions
+  const totalDepositsApprovedKobo = adminTransactions
     .filter((t) => t.type === 'deposit' && t.status === 'Completed')
     .reduce((sum, t) => sum + t.amountKobo, 0);
 
-  const totalWithdrawalsPaidKobo = transactions
+  const totalWithdrawalsPaidKobo = adminTransactions
     .filter((t) => t.type === 'withdrawal' && t.status === 'Completed')
     .reduce((sum, t) => sum + t.amountKobo, 0);
 
-  const handleApproveDeposit = (id: string) => {
-    adminApproveDeposit(id);
+  const filteredUsers = allUsers.filter((u) => {
+    const q = userSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      u.fullName.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.phone.toLowerCase().includes(q) ||
+      u.accountNumberId.toLowerCase().includes(q) ||
+      u.referralCode.toLowerCase().includes(q)
+    );
+  });
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshAdminDashboard();
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
-  const handleApproveWithdrawal = (id: string) => {
-    adminApproveWithdrawal(id);
+  const handleApproveDeposit = async (id: string) => {
+    const res = await adminApproveDeposit(id);
+    if (res.success) {
+      setActionBanner({ type: 'success', text: 'Deposit approved and investor wallet credited immediately.' });
+    } else {
+      setActionBanner({ type: 'error', text: res.error || 'Failed to approve deposit.' });
+    }
+    setTimeout(() => setActionBanner(null), 3500);
+  };
+
+  const handleApproveWithdrawal = async (id: string) => {
+    const res = await adminApproveWithdrawal(id);
+    if (res.success) {
+      setActionBanner({ type: 'success', text: 'Withdrawal marked as paid and recorded in ledger.' });
+    } else {
+      setActionBanner({ type: 'error', text: res.error || 'Failed to approve withdrawal.' });
+    }
+    setTimeout(() => setActionBanner(null), 3500);
   };
 
   const handleOpenReject = (id: string, type: 'deposit' | 'withdrawal') => {
@@ -150,24 +204,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     );
   };
 
-  const handleConfirmReject = () => {
+  const handleConfirmReject = async () => {
     if (!rejectTxId || !rejectType) return;
     if (rejectType === 'deposit') {
-      adminRejectDeposit(rejectTxId, rejectReason);
+      await adminRejectDeposit(rejectTxId, rejectReason);
     } else {
-      adminRejectWithdrawal(rejectTxId, rejectReason);
+      await adminRejectWithdrawal(rejectTxId, rejectReason);
     }
     setRejectTxId(null);
     setRejectType(null);
   };
 
-  const handleSavePlanEdit = () => {
+  const handleSavePlanEdit = async () => {
     if (!editingPlan) return;
     const dailyKobo = nairaToKobo(Number(editDailyReturn) || 0);
     const duration = Number(editDuration) || editingPlan.durationDays;
     const totalPayout = dailyKobo * duration;
 
-    adminUpdatePlan(editingPlan.id, {
+    await adminUpdatePlan(editingPlan.id, {
       dailyReturnKobo: dailyKobo,
       durationDays: duration,
       totalPayoutKobo: totalPayout,
@@ -175,11 +229,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     setEditingPlan(null);
   };
 
-  const handleCreateCode = (e: React.FormEvent) => {
+  const handleCreateCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCodeName.trim()) return;
+    setCodeErrorMsg(null);
+    setCodeSuccessMsg(null);
 
-    const res = adminCreateTopUpCode({
+    const res = await adminCreateTopUpCode({
       code: newCodeName.trim(),
       amountKobo: nairaToKobo(Number(newCodeAmount)),
       totalLimit: Number(newCodeLimit),
@@ -190,15 +246,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     if (res.success) {
       setCodeSuccessMsg(`Code ${newCodeName.toUpperCase()} created successfully!`);
       setNewCodeName('');
-      setTimeout(() => setCodeSuccessMsg(null), 3000);
+      setTimeout(() => setCodeSuccessMsg(null), 3500);
     } else {
-      alert(res.error || 'Failed to create code');
+      setCodeErrorMsg(res.error || 'Failed to create code');
     }
   };
 
-  const handleSaveSocialsAndGateways = (e: React.FormEvent) => {
+  const handleSaveSocialsAndGateways = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateAdminSettings({
+    await updateAdminSettings({
       whatsappGroupUrl: whatsappInput.trim(),
       telegramChannelUrl: telegramInput.trim(),
       baseReferralUrl: referralBaseInput.trim(),
@@ -231,42 +287,77 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     setEditPhone(targetUser.phone);
     setEditRole(targetUser.role);
     setUserEditNotice(null);
+    setUserEditError(null);
   };
 
-  const handleSaveUserFinancials = (e: React.FormEvent) => {
+  const handleSaveUserFinancials = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserForEdit) return;
+    setUserEditError(null);
+    setUserEditNotice(null);
 
-    adminUpdateUserFinancials(selectedUserForEdit.id, {
+    const balKobo = Math.round((Number(editBalNaira) || 0) * 100);
+    const capKobo = Math.round((Number(editCapitalNaira) || 0) * 100);
+    const earnKobo = Math.round((Number(editEarnedNaira) || 0) * 100);
+
+    const res = await adminUpdateUserFinancials(selectedUserForEdit.id, {
       fullName: editFullName.trim(),
       email: editEmail.trim(),
       phone: editPhone.trim(),
       role: editRole,
-      balanceKobo: Math.round((Number(editBalNaira) || 0) * 100),
-      investedCapitalKobo: Math.round((Number(editCapitalNaira) || 0) * 100),
-      totalEarnedKobo: Math.round((Number(editEarnedNaira) || 0) * 100),
+      balanceKobo: balKobo,
+      investedCapitalKobo: capKobo,
+      totalEarnedKobo: earnKobo,
       vipLevel: editVipLevel,
       spinBalance: editSpinBalance,
     });
 
-    setUserEditNotice('User profile, balances & VIP level updated successfully!');
-    setTimeout(() => setUserEditNotice(null), 3000);
+    if (res.success) {
+      setSelectedUserForEdit((prev) =>
+        prev
+          ? {
+              ...prev,
+              fullName: editFullName.trim(),
+              email: editEmail.trim(),
+              phone: editPhone.trim(),
+              balanceKobo: balKobo,
+              investedBalanceKobo: capKobo,
+              totalEarnedKobo: earnKobo,
+              vipLevel: editVipLevel,
+              spinBalance: editSpinBalance,
+            }
+          : null
+      );
+      setUserEditNotice('User profile, balances & VIP level updated permanently in database!');
+      setTimeout(() => setUserEditNotice(null), 3500);
+    } else {
+      setUserEditError(res.error || 'Failed to update user.');
+    }
   };
 
-  const handleDeleteUserInvestmentsAction = (userId: string) => {
-    adminDeleteUserInvestments(userId);
-    setEditCapitalNaira('0');
-    setConfirmDeleteInv(false);
-    setUserEditNotice('All active investments deleted. Invested capital reset to ₦0.00.');
-    setTimeout(() => setUserEditNotice(null), 3500);
+  const handleDeleteUserInvestmentsAction = async (userId: string) => {
+    const res = await adminDeleteUserInvestments(userId);
+    if (res.success) {
+      setEditCapitalNaira('0');
+      setConfirmDeleteInv(false);
+      setUserEditNotice('All active investments deleted. Invested capital reset to $0.00 (₦0).');
+      setTimeout(() => setUserEditNotice(null), 3500);
+    } else {
+      setUserEditError(res.error || 'Failed to delete investments.');
+    }
   };
 
-  const handleDeleteUserPermanentlyAction = (userId: string) => {
-    adminDeleteUser(userId);
-    setConfirmDeleteUser(false);
-    setSelectedUserForEdit(null);
-    setUserEditNotice('User permanently deleted from platform.');
-    setTimeout(() => setUserEditNotice(null), 3500);
+  const handleDeleteUserPermanentlyAction = async (userId: string) => {
+    const res = await adminDeleteUser(userId);
+    if (res.success) {
+      setConfirmDeleteUser(false);
+      setSelectedUserForEdit(null);
+      setActionBanner({ type: 'success', text: 'User permanently deleted from database.' });
+      setTimeout(() => setActionBanner(null), 3500);
+    } else {
+      setUserEditError(res.error || 'Failed to delete user.');
+      setConfirmDeleteUser(false);
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -275,33 +366,62 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
     setTimeout(() => setCopiedTextNotice(null), 2000);
   };
 
-  const handleBroadcastNotification = (e: React.FormEvent) => {
+  const handleBroadcastNotification = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!broadcastTitle.trim() || !broadcastMessage.trim()) return;
-    addNotification(broadcastTitle.trim(), broadcastMessage.trim(), broadcastType);
-    setBroadcastTitle('');
-    setBroadcastMessage('');
-    setBroadcastSuccess('Announcement broadcasted to all investor dashboards!');
-    setTimeout(() => setBroadcastSuccess(null), 3500);
+    const res = await adminPublishNotification(broadcastTitle.trim(), broadcastMessage.trim(), broadcastType);
+    if (res.success) {
+      setBroadcastTitle('');
+      setBroadcastMessage('');
+      setBroadcastSuccess('Announcement broadcasted to all investor dashboards!');
+      setTimeout(() => setBroadcastSuccess(null), 3500);
+    }
   };
 
   return (
     <div className="pb-28 pt-2 px-4 space-y-4">
       {/* Top Admin Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-2 border-b border-slate-800 gap-2">
         <button
           onClick={onBackToUserView}
-          className="flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 font-bold"
+          className="flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 font-bold cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Return to Investor Portal</span>
+          <span>Investor Portal</span>
         </button>
 
-        <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-950/80 border border-pink-500/40 text-[10px] font-bold text-pink-300">
-          <ShieldCheck className="w-3.5 h-3.5 text-pink-400" />
-          <span>ADMIN ACCESS 2026</span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleManualRefresh}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-900 border border-sky-500/40 text-[10px] font-bold text-sky-300 hover:bg-slate-800 cursor-pointer"
+            title="Refresh Live Database"
+          >
+            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Syncing' : 'Live Sync'}</span>
+          </button>
+
+          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-950/80 border border-pink-500/40 text-[10px] font-bold text-pink-300">
+            <ShieldCheck className="w-3.5 h-3.5 text-pink-400" />
+            <span>SOLE ADMIN</span>
+          </div>
         </div>
       </div>
+
+      {actionBanner && (
+        <div
+          className={`p-3 rounded-2xl text-xs font-bold flex items-center justify-between gap-2 ${
+            actionBanner.type === 'success'
+              ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200'
+              : 'bg-pink-950/80 border border-pink-500/40 text-pink-200'
+          }`}
+        >
+          <span>{actionBanner.text}</span>
+          <button onClick={() => setActionBanner(null)} className="text-slate-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Admin Sub-navigation Tabs */}
       <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
@@ -335,34 +455,46 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
               <span className="text-[10px] uppercase font-bold text-slate-400">Total Deposits In</span>
-              <p className="text-xl font-black font-mono text-emerald-400 mt-1">
-                {formatNaira(totalDepositsApprovedKobo, false)}
-              </p>
-              <p className="text-[10px] text-slate-500">Reconciled capital</p>
+              <DualCurrency
+                kobo={totalDepositsApprovedKobo}
+                rate={rate}
+                usdClassName="text-lg font-black font-mono text-emerald-400 mt-1"
+                nairaClassName="text-[10px] font-mono text-slate-400"
+              />
+              <p className="text-[10px] text-slate-500 mt-0.5">Reconciled capital</p>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
               <span className="text-[10px] uppercase font-bold text-slate-400">Total Payouts Out</span>
-              <p className="text-xl font-black font-mono text-pink-400 mt-1">
-                {formatNaira(totalWithdrawalsPaidKobo, false)}
-              </p>
-              <p className="text-[10px] text-slate-500">Disbursed to banks</p>
+              <DualCurrency
+                kobo={totalWithdrawalsPaidKobo}
+                rate={rate}
+                usdClassName="text-lg font-black font-mono text-pink-400 mt-1"
+                nairaClassName="text-[10px] font-mono text-slate-400"
+              />
+              <p className="text-[10px] text-slate-500 mt-0.5">Disbursed to banks</p>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
               <span className="text-[10px] uppercase font-bold text-slate-400">Active Capital Pool</span>
-              <p className="text-xl font-black font-mono text-sky-400 mt-1">
-                {formatNaira(investedCapitalKobo, false)}
-              </p>
-              <p className="text-[10px] text-slate-500">Currently in VIP tiers</p>
+              <DualCurrency
+                kobo={adminStats.totalActiveCapitalPoolKobo}
+                rate={rate}
+                usdClassName="text-lg font-black font-mono text-sky-400 mt-1"
+                nairaClassName="text-[10px] font-mono text-slate-400"
+              />
+              <p className="text-[10px] text-slate-500 mt-0.5">Total across all VIP plans</p>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] uppercase font-bold text-slate-400">Pending Requests</span>
-              <p className="text-xl font-black font-mono text-amber-400 mt-1">
-                {pendingDeposits.length + pendingWithdrawals.length}
-              </p>
-              <p className="text-[10px] text-slate-500">Requires admin action</p>
+              <span className="text-[10px] uppercase font-bold text-slate-400">Total User Balances</span>
+              <DualCurrency
+                kobo={adminStats.totalUserBalancesKobo}
+                rate={rate}
+                usdClassName="text-lg font-black font-mono text-amber-300 mt-1"
+                nairaClassName="text-[10px] font-mono text-slate-400"
+              />
+              <p className="text-[10px] text-slate-500 mt-0.5">Registered users: {allUsers.length}</p>
             </div>
           </div>
 
@@ -379,28 +511,43 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
               <span className="text-slate-300">Pending Withdrawal Payouts:</span>
               <span className="font-bold font-mono text-pink-400">{pendingWithdrawals.length}</span>
             </div>
+            <div className="flex justify-between items-center text-xs p-2.5 rounded-xl bg-slate-950">
+              <span className="text-slate-300">Permanent Database Investors:</span>
+              <span className="font-bold font-mono text-emerald-400">{allUsers.length}</span>
+            </div>
           </div>
         </div>
       )}
 
       {/* TAB 2: REGISTERED USERS MANAGEMENT */}
-      {/* Requirement: "every user that registers should be recorded in the admin panel" */}
       {adminTab === 'users' && (
         <div className="space-y-3">
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                Registered Investors & Admins ({allUsers.length})
+                Registered Investors & Admin ({allUsers.length})
               </h3>
-              <p className="text-[10px] text-slate-400">All registered accounts are captured on the ledger</p>
+              <p className="text-[10px] text-slate-400">All new registrations appear instantly from permanent database</p>
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono font-bold">
-              Total: {allUsers.length}
+              Showing: {filteredUsers.length}
             </span>
           </div>
 
+          {/* Search Users */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={userSearchQuery}
+              onChange={(e) => setUserSearchQuery(e.target.value)}
+              placeholder="Search by name, email, phone, account ID or referral code..."
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 focus:border-sky-500 rounded-2xl text-xs text-white focus:outline-none"
+            />
+          </div>
+
           <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-            {allUsers.map((u) => {
+            {filteredUsers.map((u) => {
               const uBalKobo = u.balanceKobo || 0;
               const uCapKobo = u.investedBalanceKobo || 0;
               const uEarnKobo = u.totalEarnedKobo || 0;
@@ -456,7 +603,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                         {u.accountNumberId}
                       </span>
                       <p className="text-[10px] text-slate-500 mt-1">
-                        Reg: {u.registrationDate ? u.registrationDate.slice(0, 10) : '2026'}
+                        Reg: {u.registrationDate ? formatDate(u.registrationDate) : '2026'}
                       </p>
                     </div>
                   </div>
@@ -487,39 +634,48 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     </div>
                   </div>
 
-                  {/* Row 3: Financial Balances Grid (Available, Invested/Capital, Profit, VIP, Spins) */}
+                  {/* Row 3: Financial Balances Grid (USD Primary + Naira Below) */}
                   <div className="grid grid-cols-5 gap-1 text-center text-xs">
                     <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                       <span className="text-[9px] uppercase font-bold text-slate-400 block truncate">Available</span>
                       <span className="font-bold font-mono text-white text-[10px] truncate block">
-                        {formatNaira(uBalKobo, false)}
+                        {formatUsd(uBalKobo, true, rate)}
+                      </span>
+                      <span className="font-mono text-slate-500 text-[8px] truncate block">
+                        ≈ {formatNaira(uBalKobo, false)}
                       </span>
                     </div>
 
                     <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                       <span className="text-[9px] uppercase font-bold text-slate-400 block truncate">Invested</span>
                       <span className="font-bold font-mono text-sky-300 text-[10px] truncate block">
-                        {formatNaira(uCapKobo, false)}
+                        {formatUsd(uCapKobo, false, rate)}
+                      </span>
+                      <span className="font-mono text-slate-500 text-[8px] truncate block">
+                        ≈ {formatNaira(uCapKobo, false)}
                       </span>
                     </div>
 
                     <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                       <span className="text-[9px] uppercase font-bold text-slate-400 block truncate">Earned</span>
                       <span className="font-bold font-mono text-emerald-400 text-[10px] truncate block">
-                        {formatNaira(uEarnKobo, false)}
+                        {formatUsd(uEarnKobo, true, rate)}
+                      </span>
+                      <span className="font-mono text-slate-500 text-[8px] truncate block">
+                        ≈ {formatNaira(uEarnKobo, false)}
                       </span>
                     </div>
 
                     <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                       <span className="text-[9px] uppercase font-bold text-slate-400 block truncate">VIP</span>
-                      <span className="font-extrabold font-mono text-amber-300 text-[10px] block">
+                      <span className="font-extrabold font-mono text-amber-300 text-[10px] block mt-0.5">
                         T{uVip}
                       </span>
                     </div>
 
                     <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                       <span className="text-[9px] uppercase font-bold text-purple-400 block truncate">Spins</span>
-                      <span className="font-extrabold font-mono text-purple-300 text-[10px] block">
+                      <span className="font-extrabold font-mono text-purple-300 text-[10px] block mt-0.5">
                         {u.spinBalance || 0}
                       </span>
                     </div>
@@ -537,10 +693,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     </button>
 
                     <div className="flex items-center gap-1.5">
-                      {/* Quick Ban/Unban Withdraw */}
                       <button
                         type="button"
-                        onClick={() => adminToggleUserWithdrawalBan(u.id)}
+                        onClick={() => void adminToggleUserWithdrawalBan(u.id)}
                         title={u.isWithdrawalBanned ? 'Unfreeze user payouts' : 'Freeze user payouts'}
                         className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition ${
                           u.isWithdrawalBanned
@@ -551,10 +706,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                         {u.isWithdrawalBanned ? 'Unban Wth' : 'Ban Wth'}
                       </button>
 
-                      {/* Quick Suspend/Unsuspend */}
                       <button
                         type="button"
-                        onClick={() => adminToggleUserSuspension(u.id)}
+                        onClick={() => void adminToggleUserSuspension(u.id)}
                         title={u.isSuspended ? 'Reactivate account' : 'Suspend account'}
                         className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition ${
                           u.isSuspended
@@ -565,10 +719,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                         {u.isSuspended ? 'Restore' : 'Suspend'}
                       </button>
 
-                      {/* KYC toggle */}
                       <button
                         type="button"
-                        onClick={() => adminToggleUserVerification(u.id)}
+                        onClick={() => void adminToggleUserVerification(u.id)}
                         className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition ${
                           u.isVerified
                             ? 'bg-slate-800 text-slate-400 hover:text-white'
@@ -669,9 +822,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                   Auto-credited to new verified accounts upon registration
                 </p>
               </div>
-              <span className="text-sm font-black font-mono text-emerald-400">
-                {formatNaira(adminSettings.welcomeBonusKobo)}
-              </span>
+              <DualCurrency
+                kobo={adminSettings.welcomeBonusKobo}
+                rate={rate}
+                align="right"
+                usdClassName="text-sm font-black font-mono text-emerald-400"
+                nairaClassName="text-[10px] font-mono text-slate-400"
+              />
             </div>
 
             {/* Referral Tiers Config */}
@@ -785,9 +942,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-slate-300 mb-1">
-                      Friend Wheel (₦)
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-[10px] font-semibold text-slate-300">
+                        Friend Wheel (₦)
+                      </label>
+                      <span className="text-[9px] font-mono text-emerald-400">
+                        {formatUsd(nairaToKobo(Number(wheelFriendInput) || 0), true, rate)}
+                      </span>
+                    </div>
                     <input
                       type="number"
                       value={wheelFriendInput}
@@ -797,9 +959,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-slate-300 mb-1">
-                      Personal Wheel (₦)
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-[10px] font-semibold text-slate-300">
+                        Personal Wheel (₦)
+                      </label>
+                      <span className="text-[9px] font-mono text-emerald-400">
+                        {formatUsd(nairaToKobo(Number(wheelUserInput) || 0), true, rate)}
+                      </span>
+                    </div>
                     <input
                       type="number"
                       value={wheelUserInput}
@@ -988,21 +1155,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     )}
                     <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(tx.date)}</p>
                   </div>
-                  <p className="text-base font-black font-mono text-emerald-400">
-                    +{formatNaira(tx.amountKobo)}
-                  </p>
+                  <div className="text-right">
+                    <DualCurrency
+                      kobo={tx.amountKobo}
+                      rate={rate}
+                      prefix="+"
+                      align="right"
+                      usdClassName="text-base font-black font-mono text-emerald-400"
+                      nairaClassName="text-[11px] font-mono text-slate-400"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex gap-2 pt-1 border-t border-slate-800">
                   <button
                     onClick={() => handleOpenReject(tx.id, 'deposit')}
-                    className="w-1/2 py-2 rounded-xl bg-pink-950/60 hover:bg-pink-950 text-pink-300 border border-pink-500/30 text-xs font-bold"
+                    className="w-1/2 py-2 rounded-xl bg-pink-950/60 hover:bg-pink-950 text-pink-300 border border-pink-500/30 text-xs font-bold cursor-pointer"
                   >
                     Reject
                   </button>
                   <button
-                    onClick={() => handleApproveDeposit(tx.id)}
-                    className="w-1/2 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30"
+                    onClick={() => void handleApproveDeposit(tx.id)}
+                    className="w-1/2 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30 cursor-pointer"
                   >
                     Approve & Credit Balance
                   </button>
@@ -1047,12 +1221,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(tx.date)}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-base font-black font-mono text-pink-400">
-                      {formatNaira(tx.amountKobo)}
-                    </p>
+                    <DualCurrency
+                      kobo={tx.amountKobo}
+                      rate={rate}
+                      align="right"
+                      usdClassName="text-base font-black font-mono text-pink-400"
+                      nairaClassName="text-[11px] font-mono text-slate-400"
+                    />
                     {tx.feeKobo && (
-                      <p className="text-[10px] text-slate-400 font-mono">
-                        Fee: {formatNaira(tx.feeKobo)}
+                      <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        Fee: {formatUsd(tx.feeKobo, true, rate)} (≈ {formatNaira(tx.feeKobo, false)})
                       </p>
                     )}
                   </div>
@@ -1061,13 +1239,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                 <div className="flex gap-2 pt-1 border-t border-slate-800">
                   <button
                     onClick={() => handleOpenReject(tx.id, 'withdrawal')}
-                    className="w-1/2 py-2 rounded-xl bg-pink-950/60 hover:bg-pink-950 text-pink-300 border border-pink-500/30 text-xs font-bold"
+                    className="w-1/2 py-2 rounded-xl bg-pink-950/60 hover:bg-pink-950 text-pink-300 border border-pink-500/30 text-xs font-bold cursor-pointer"
                   >
                     Reject & Refund
                   </button>
                   <button
-                    onClick={() => handleApproveWithdrawal(tx.id)}
-                    className="w-1/2 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white text-xs font-bold shadow-md shadow-sky-500/25"
+                    onClick={() => void handleApproveWithdrawal(tx.id)}
+                    className="w-1/2 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white text-xs font-bold shadow-md shadow-sky-500/25 cursor-pointer"
                   >
                     Approve & Mark Paid
                   </button>
@@ -1088,7 +1266,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
             {plans.map((p) => (
               <div
                 key={p.id}
-                className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex justify-between items-center"
+                className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex justify-between items-center gap-2"
               >
                 <div>
                   <div className="flex items-center gap-1.5">
@@ -1097,8 +1275,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                       {p.badge}
                     </span>
                   </div>
-                  <p className="text-[10px] font-mono text-slate-400 mt-0.5">
-                    Capital: {formatNaira(p.capitalKobo, false)} • Daily: +{formatNaira(p.dailyReturnKobo, false)} ({p.durationDays}d)
+                  <p className="text-[10px] font-mono text-slate-300 mt-0.5">
+                    Capital: {formatUsd(p.capitalKobo, false, rate)} (≈ {formatNaira(p.capitalKobo, false)})
+                  </p>
+                  <p className="text-[10px] font-mono text-emerald-400">
+                    Daily: +{formatUsd(p.dailyReturnKobo, true, rate)} (≈ {formatNaira(p.dailyReturnKobo, false)}) · {p.durationDays}d
                   </p>
                 </div>
                 <button
@@ -1107,7 +1288,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     setEditDailyReturn((p.dailyReturnKobo / 100).toString());
                     setEditDuration(p.durationDays.toString());
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-sky-400"
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-sky-400 cursor-pointer shrink-0"
                 >
                   Edit Terms
                 </button>
@@ -1123,6 +1304,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
           {codeSuccessMsg && (
             <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/40 text-xs text-emerald-200">
               {codeSuccessMsg}
+            </div>
+          )}
+          {codeErrorMsg && (
+            <div className="p-3 rounded-xl bg-pink-950/80 border border-pink-500/40 text-xs text-pink-200">
+              {codeErrorMsg}
             </div>
           )}
 
@@ -1145,7 +1331,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Reward Value (₦)</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-semibold text-slate-300">Reward Value (₦)</label>
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                    {formatUsd(nairaToKobo(Number(newCodeAmount) || 0), true, rate)}
+                  </span>
+                </div>
                 <input
                   type="number"
                   value={newCodeAmount}
@@ -1193,11 +1384,43 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
 
             <button
               type="submit"
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase"
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-bold text-xs uppercase cursor-pointer"
             >
               Issue Promotional Code
             </button>
           </form>
+
+          {/* Issued Voucher Codes List */}
+          {adminTopUpCodes.length > 0 && (
+            <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-2.5">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                Active Database Voucher Codes ({adminTopUpCodes.length})
+              </h4>
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                {adminTopUpCodes.map((c) => (
+                  <div
+                    key={c.code}
+                    className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex justify-between items-center text-xs"
+                  >
+                    <div>
+                      <span className="font-mono font-black text-sky-400">{c.code}</span>
+                      <p className="text-[10px] text-slate-400">{c.description}</p>
+                      <p className="text-[10px] text-slate-500">
+                        Used: {c.claimedCount} / {c.totalLimit} · Exp: {c.expiryDate}
+                      </p>
+                    </div>
+                    <DualCurrency
+                      kobo={c.amountKobo}
+                      rate={rate}
+                      align="right"
+                      usdClassName="font-mono font-bold text-emerald-400 text-xs"
+                      nairaClassName="text-[10px] font-mono text-slate-400"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1270,9 +1493,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
           <div className="w-full max-w-sm bg-slate-900 border border-sky-500/30 rounded-3xl p-5 text-white space-y-3">
             <h4 className="font-bold text-sm text-sky-400">Edit {editingPlan.name}</h4>
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Daily Return Amount (₦)
-              </label>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs font-semibold text-slate-300">
+                  Daily Return Amount (₦)
+                </label>
+                <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                  {formatUsd(nairaToKobo(Number(editDailyReturn) || 0), true, rate)}
+                </span>
+              </div>
               <input
                 type="number"
                 value={editDailyReturn}
@@ -1344,11 +1572,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
               </button>
             </div>
 
-            {/* Notification / Copy Toast */}
+            {/* Notification / Copy / Error Toast */}
             {userEditNotice && (
               <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                 <span>{userEditNotice}</span>
+              </div>
+            )}
+            {userEditError && (
+              <div className="p-3 rounded-2xl bg-pink-950/80 border border-pink-500/50 text-xs text-pink-200 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-pink-400 flex-shrink-0" />
+                <span>{userEditError}</span>
               </div>
             )}
             {copiedTextNotice && (
@@ -1364,15 +1598,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                   <DollarSign className="w-4 h-4" />
                   <span>Financial Balances & VIP Tier</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-mono">Real-time ledger</span>
+                <span className="text-[10px] text-slate-400 font-mono">Permanent SQLite Ledger</span>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
                 {/* Available Balance */}
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Available Balance (₦)
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] font-semibold text-slate-300">Available (₦)</label>
+                    <span className="text-[10px] font-mono font-bold text-emerald-400">
+                      {formatUsd(Math.round((Number(editBalNaira) || 0) * 100), true, rate)}
+                    </span>
+                  </div>
                   <input
                     type="number"
                     value={editBalNaira}
@@ -1384,9 +1621,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
 
                 {/* Invested Balance / Capital */}
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Invested Capital (₦)
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] font-semibold text-slate-300">Invested (₦)</label>
+                    <span className="text-[10px] font-mono font-bold text-sky-300">
+                      {formatUsd(Math.round((Number(editCapitalNaira) || 0) * 100), true, rate)}
+                    </span>
+                  </div>
                   <input
                     type="number"
                     value={editCapitalNaira}
@@ -1398,9 +1638,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
 
                 {/* Total Earned Balance */}
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Total Earned Profit (₦)
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] font-semibold text-slate-300">Earned Profit (₦)</label>
+                    <span className="text-[10px] font-mono font-bold text-emerald-400">
+                      {formatUsd(Math.round((Number(editEarnedNaira) || 0) * 100), true, rate)}
+                    </span>
+                  </div>
                   <input
                     type="number"
                     value={editEarnedNaira}
@@ -1421,18 +1664,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl text-xs font-bold text-amber-300"
                   >
                     <option value={0}>Tier 0 (Standard Free)</option>
-                    <option value={1}>VIP 1 (₦3,000 Mini)</option>
-                    <option value={2}>VIP 2 (₦10,000 Starter)</option>
-                    <option value={3}>VIP 3 (₦30,000 Pro)</option>
-                    <option value={4}>VIP 4 (₦50,000 Growth)</option>
-                    <option value={5}>VIP 5 (₦70,000 Advanced)</option>
-                    <option value={6}>VIP 6 (₦100,000 Elite)</option>
-                    <option value={7}>VIP 7 (₦200,000 Diamond)</option>
-                    <option value={8}>VIP 8 (₦300,000 Platinum)</option>
-                    <option value={9}>VIP 9 (₦500,000 Master)</option>
-                    <option value={10}>VIP 10 (₦1,000,000 Imperial)</option>
-                    <option value={11}>VIP 11 (₦1,500,000 Supreme)</option>
-                    <option value={12}>VIP 12 (₦2,000,000 Sovereign)</option>
+                    {plans.map((p) => (
+                      <option key={p.vipTier} value={p.vipTier}>
+                        VIP {p.vipTier} ({formatUsd(p.capitalKobo, false, rate)} / ≈ {formatNaira(p.capitalKobo, false)})
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -1484,15 +1720,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-300 mb-1">Account Role</label>
-                  <select
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white font-bold"
-                  >
-                    <option value="user">Standard Investor</option>
-                    <option value="admin">Administrator</option>
-                  </select>
+                  <label className="block text-[10px] font-semibold text-slate-300 mb-1">Account Role (Locked)</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={selectedUserForEdit.email.toLowerCase() === 'emmanuelchidalu67@gmail.com' ? 'Sole Administrator' : 'Standard Investor'}
+                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-400 font-bold cursor-not-allowed"
+                  />
                 </div>
               </div>
 
@@ -1515,7 +1749,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                 <button
                   type="button"
                   onClick={() => {
-                    adminToggleUserWithdrawalBan(selectedUserForEdit.id);
+                    void adminToggleUserWithdrawalBan(selectedUserForEdit.id);
                     setSelectedUserForEdit((prev) =>
                       prev ? { ...prev, isWithdrawalBanned: !prev.isWithdrawalBanned } : null
                     );
@@ -1539,7 +1773,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                 <button
                   type="button"
                   onClick={() => {
-                    adminToggleUserSuspension(selectedUserForEdit.id);
+                    void adminToggleUserSuspension(selectedUserForEdit.id);
                     setSelectedUserForEdit((prev) =>
                       prev ? { ...prev, isSuspended: !prev.isSuspended } : null
                     );
@@ -1581,7 +1815,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleDeleteUserInvestmentsAction(selectedUserForEdit.id)}
+                      onClick={() => void handleDeleteUserInvestmentsAction(selectedUserForEdit.id)}
                       className="px-2.5 py-1 rounded-lg bg-red-600 text-white hover:bg-red-500 text-[10px] font-extrabold shadow cursor-pointer transition"
                     >
                       Confirm Delete All
@@ -1599,12 +1833,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
 
               {confirmDeleteInv && (
                 <div className="p-2.5 rounded-xl bg-red-950/40 border border-red-500/40 text-[11px] text-red-200">
-                  ⚠️ This will revoke and delete all active investment contracts for this investor and reset active capital to ₦0.00.
+                  ⚠️ This will revoke and delete all active investment contracts for this investor and reset active capital to $0.00 (₦0).
                 </div>
               )}
 
               {(() => {
-                const userInvs = userInvestments.filter((inv) => inv.userId === selectedUserForEdit.id);
+                const userInvs = adminInvestments.filter((inv) => inv.userId === selectedUserForEdit.id);
                 if (userInvs.length === 0) {
                   return <p className="text-[11px] text-slate-500 py-1">No active investment contracts for this investor.</p>;
                 }
@@ -1618,11 +1852,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
                         <div>
                           <p className="font-bold text-white">{inv.planName}</p>
                           <p className="text-[10px] text-slate-400 font-mono">
-                            Day {inv.daysElapsed}/{inv.durationDays} · Daily: +{formatNaira(inv.dailyReturnKobo, false)}
+                            Day {inv.daysElapsed}/{inv.durationDays} · Daily: +{formatUsd(inv.dailyReturnKobo, true, rate)} (≈ {formatNaira(inv.dailyReturnKobo, false)})
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="font-mono font-bold text-sky-300">{formatNaira(inv.capitalKobo, false)}</p>
+                          <p className="font-mono font-bold text-sky-300">{formatUsd(inv.capitalKobo, false, rate)}</p>
+                          <p className="font-mono text-[9px] text-slate-400">≈ {formatNaira(inv.capitalKobo, false)}</p>
                           <span className="text-[9px] font-semibold text-emerald-400">{inv.status}</span>
                         </div>
                       </div>
@@ -1723,49 +1958,55 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToUserView }) =>
             </div>
 
             {/* SECTION 5: DANGER ZONE - PERMANENT USER PURGE */}
-            <div className="p-3.5 rounded-2xl bg-red-950/30 border border-red-500/30 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-bold text-red-300">Permanently Delete User</p>
-                  <p className="text-[10px] text-slate-400">
-                    Wipe this investor permanently from platform database, transactions, and banking.
-                  </p>
+            {selectedUserForEdit.email.toLowerCase() !== 'emmanuelchidalu67@gmail.com' ? (
+              <div className="p-3.5 rounded-2xl bg-red-950/30 border border-red-500/30 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold text-red-300">Permanently Delete User</p>
+                    <p className="text-[10px] text-slate-400">
+                      Wipe this investor permanently from platform database, transactions, and banking.
+                    </p>
+                  </div>
+                  {!confirmDeleteUser ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteUser(true)}
+                      className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase flex items-center gap-1 shadow-md transition cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Account</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteUserPermanentlyAction(selectedUserForEdit.id)}
+                        className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs uppercase shadow-md transition cursor-pointer"
+                      >
+                        Confirm Permanent Wipe
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteUser(false)}
+                        className="px-2.5 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {!confirmDeleteUser ? (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeleteUser(true)}
-                    className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase flex items-center gap-1 shadow-md transition cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Account</span>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteUserPermanentlyAction(selectedUserForEdit.id)}
-                      className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs uppercase shadow-md transition cursor-pointer"
-                    >
-                      Confirm Permanent Wipe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteUser(false)}
-                      className="px-2.5 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
-                    >
-                      Cancel
-                    </button>
+
+                {confirmDeleteUser && (
+                  <div className="p-2.5 rounded-xl bg-red-900/40 border border-red-500/50 text-[11px] text-red-200">
+                    ⚠️ <strong>CRITICAL WARNING:</strong> This will completely remove <strong>{selectedUserForEdit.fullName}</strong> ({selectedUserForEdit.email}), all associated transaction logs, and balances permanently. This cannot be undone.
                   </div>
                 )}
               </div>
-
-              {confirmDeleteUser && (
-                <div className="p-2.5 rounded-xl bg-red-900/40 border border-red-500/50 text-[11px] text-red-200">
-                  ⚠️ <strong>CRITICAL WARNING:</strong> This will completely remove <strong>{selectedUserForEdit.fullName}</strong> ({selectedUserForEdit.email}), all associated transaction logs, and balances permanently. This cannot be undone.
-                </div>
-              )}
-            </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-sky-950/30 border border-sky-500/30 text-[11px] text-sky-200">
+                Sole Administrator account is permanently locked and cannot be deleted.
+              </div>
+            )}
           </div>
         </div>
       )}

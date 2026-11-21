@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  ReactNode,
+} from 'react';
 import {
   UserProfile,
   UserRole,
@@ -13,7 +21,10 @@ import {
   AdminSettings,
 } from '../types';
 import { INITIAL_INVESTMENT_PLANS } from '../data/plans';
-import { generateReference } from '../utils/formatters';
+import { apiRequest, setInMemorySessionToken } from '../utils/api';
+
+const ADMIN_EMAIL = 'emmanuelchidalu67@gmail.com';
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 interface CelebrationData {
   planName: string;
@@ -21,10 +32,18 @@ interface CelebrationData {
   dailyYieldKobo: number;
 }
 
+interface AdminStats {
+  totalActiveCapitalPoolKobo: number;
+  totalUserBalancesKobo: number;
+  totalUserEarnedKobo: number;
+}
+
 interface AppContextType {
   // Auth & Profile
   user: UserProfile | null;
   allUsers: UserProfile[];
+  downlines: UserProfile[];
+  downlineMaxInvestKobo: number;
   isAuthenticated: boolean;
   activeTab: 'home' | 'plans' | 'invest' | 'team' | 'profile' | 'admin';
   setActiveTab: (tab: 'home' | 'plans' | 'invest' | 'team' | 'profile' | 'admin') => void;
@@ -32,7 +51,7 @@ interface AppContextType {
   setAuthView: (view: 'login' | 'signup' | 'forgot_password' | 'verify_otp' | null) => void;
   showSplash: boolean;
   setShowSplash: (show: boolean) => void;
-  login: (identifier: string, pass: string) => { success: boolean; error?: string };
+  login: (identifier: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signup: (data: {
     fullName: string;
     email: string;
@@ -41,25 +60,29 @@ interface AppContextType {
     withdrawalPin: string;
     password?: string;
     referralCode?: string;
-  }) => { success: boolean; error?: string };
-  verifyOtp: (code: string) => { success: boolean; error?: string };
-  logout: () => void;
-  updateProfile: (updates: Partial<UserProfile>) => void;
-  updateWithdrawalPin: (newPin: string) => { success: boolean };
+  }) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  updateProfile: (updates: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>;
+  updateWithdrawalPin: (newPin: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   showCommunityModal: boolean;
   setShowCommunityModal: (show: boolean) => void;
+  refreshState: () => Promise<void>;
+  refreshAdminDashboard: () => Promise<void>;
 
   // Financial Balances (in Kobo)
   availableBalanceKobo: number;
   investedCapitalKobo: number;
   verifiedEarningsKobo: number;
   pendingWithdrawalKobo: number;
+  liveAccruingKobo: number;
+  totalLiveProfitKobo: number;
+  perSecondYieldKobo: number;
 
   // Plans & Investments
   plans: InvestmentPlan[];
   userInvestments: UserInvestment[];
-  investInPlan: (planId: string) => { success: boolean; error?: string; reference?: string };
-  claimInvestmentYield: (investmentId: string) => { success: boolean; amountClaimedKobo?: number; error?: string };
+  investInPlan: (planId: string) => Promise<{ success: boolean; error?: string; reference?: string }>;
 
   // Subtle Canvas Celebration
   celebrationData: CelebrationData | null;
@@ -67,17 +90,18 @@ interface AppContextType {
 
   // Transactions & History
   transactions: TransactionRecord[];
+  publicFeedWithdrawals: TransactionRecord[];
   submitDeposit: (data: {
     amountKobo: number;
     senderName: string;
     senderReference?: string;
     paymentMethod: string;
-  }) => { success: boolean; reference: string };
+  }) => Promise<{ success: boolean; reference: string; error?: string }>;
   submitWithdrawal: (data: {
     amountKobo: number;
     bankAccountId: string;
     withdrawalPin: string;
-  }) => { success: boolean; error?: string; reference?: string };
+  }) => Promise<{ success: boolean; error?: string; reference?: string }>;
 
   // Bank Accounts
   bankAccounts: BankAccount[];
@@ -89,13 +113,13 @@ interface AppContextType {
     type?: 'bank' | 'bep20';
     bep20Address?: string;
     network?: string;
-  }) => { success: boolean; error?: string };
-  deleteBankAccount: (id: string) => void;
-  setDefaultBankAccount: (id: string) => void;
+  }) => Promise<{ success: boolean; error?: string }>;
+  deleteBankAccount: (id: string) => Promise<void>;
+  setDefaultBankAccount: (id: string) => Promise<void>;
 
   // Top-Up Codes
   topUpCodes: TopUpCode[];
-  redeemTopUpCode: (codeStr: string) => { success: boolean; message: string; amountKobo?: number };
+  redeemTopUpCode: (codeStr: string) => Promise<{ success: boolean; message: string; amountKobo?: number }>;
 
   // Team & Referrals (Real calculation starting at 0)
   referralStats: {
@@ -112,44 +136,51 @@ interface AppContextType {
     network: string;
     phoneNumber: string;
     amountKobo: number;
-  }) => { success: boolean; error?: string; reference?: string };
+  }) => Promise<{ success: boolean; error?: string; reference?: string }>;
   buyDataBundle: (data: {
     network: string;
     phoneNumber: string;
     bundleName: string;
     amountKobo: number;
-  }) => { success: boolean; error?: string; reference?: string };
+  }) => Promise<{ success: boolean; error?: string; reference?: string }>;
   payElectricityBill: (data: {
     disco: string;
     meterNumber: string;
     meterType: 'prepaid' | 'postpaid';
     amountKobo: number;
-  }) => { success: boolean; error?: string; token?: string; reference?: string };
+  }) => Promise<{ success: boolean; error?: string; token?: string; reference?: string }>;
 
   // Notifications
   notifications: NotificationItem[];
   unreadNotificationCount: number;
-  markNotificationAsRead: (id: string) => void;
-  markAllNotificationsAsRead: () => void;
-  addNotification: (title: string, message: string, type?: NotificationItem['type'], targetUserId?: string) => void;
+  markNotificationAsRead: (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
+
+  // Lucky Wheel
+  recordWheelSpin: (wonPrizeTitle?: string, wonPrizeMessage?: string) => Promise<void>;
 
   // Admin Capabilities & System Controls
   adminSettings: AdminSettings;
-  updateAdminSettings: (updates: Partial<AdminSettings>) => void;
+  adminTransactions: TransactionRecord[];
+  adminInvestments: UserInvestment[];
+  adminBankAccounts: BankAccount[];
+  adminTopUpCodes: TopUpCode[];
+  adminStats: AdminStats;
   auditLogs: AuditLogItem[];
-  adminApproveDeposit: (transactionId: string) => { success: boolean };
-  adminRejectDeposit: (transactionId: string, reason: string) => { success: boolean };
-  adminApproveWithdrawal: (transactionId: string) => { success: boolean };
-  adminRejectWithdrawal: (transactionId: string, reason: string) => { success: boolean };
-  adminUpdatePlan: (planId: string, updates: Partial<InvestmentPlan>) => void;
+  updateAdminSettings: (updates: Partial<AdminSettings>) => Promise<void>;
+  adminApproveDeposit: (transactionId: string) => Promise<{ success: boolean; error?: string }>;
+  adminRejectDeposit: (transactionId: string, reason: string) => Promise<{ success: boolean; error?: string }>;
+  adminApproveWithdrawal: (transactionId: string) => Promise<{ success: boolean; error?: string }>;
+  adminRejectWithdrawal: (transactionId: string, reason: string) => Promise<{ success: boolean; error?: string }>;
+  adminUpdatePlan: (planId: string, updates: Partial<InvestmentPlan>) => Promise<void>;
   adminCreateTopUpCode: (data: {
     code: string;
     amountKobo: number;
     totalLimit: number;
     expiryDate: string;
     description: string;
-  }) => { success: boolean; error?: string };
-  adminToggleUserVerification: (userId: string) => void;
+  }) => Promise<{ success: boolean; error?: string }>;
+  adminToggleUserVerification: (userId: string) => Promise<void>;
   adminUpdateUserFinancials: (
     userId: string,
     updates: {
@@ -165,37 +196,24 @@ interface AppContextType {
       phone?: string;
       role?: UserRole;
     }
-  ) => { success: boolean };
-  adminDeleteUserInvestments: (userId: string) => { success: boolean };
-  adminDeleteUser: (userId: string) => { success: boolean };
-  adminToggleUserWithdrawalBan: (userId: string) => { success: boolean };
-  adminToggleUserSuspension: (userId: string) => { success: boolean };
-  adminPublishNotification: (title: string, message: string, type?: NotificationItem['type']) => void;
+  ) => Promise<{ success: boolean; error?: string }>;
+  adminDeleteUserInvestments: (userId: string) => Promise<{ success: boolean; error?: string }>;
+  adminDeleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
+  adminToggleUserWithdrawalBan: (userId: string) => Promise<{ success: boolean; error?: string }>;
+  adminToggleUserSuspension: (userId: string) => Promise<{ success: boolean; error?: string }>;
+  adminPublishNotification: (
+    title: string,
+    message: string,
+    type?: NotificationItem['type']
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Initial registered admin user
-const INITIAL_ADMIN_USER: UserProfile = {
-  id: 'usr-admin-01',
-  fullName: 'Emmanuel Chidalu (Admin)',
-  email: 'emmanuelchidalu67@gmail.com',
-  phone: '08100241166',
-  countryCode: '+234',
-  accountNumberId: 'ACI-000001',
-  referralCode: 'ADMIN2026',
-  avatarInitials: 'EC',
-  isVerified: true,
-  welcomeBonusClaimed: true,
-  registrationDate: '2026-10-01T08:00:00.000Z',
-  withdrawalPinSet: true,
-  role: 'admin',
-};
-
 const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
-  withdrawalFeePercent: 15, // 15% as requested!
-  allowWeekendWithdrawals: false, // No withdrawals on Sat and Sun by default
-  welcomeBonusKobo: 800 * 100, // ₦800 = 80,000 kobo auto added
+  withdrawalFeePercent: 15,
+  allowWeekendWithdrawals: false,
+  welcomeBonusKobo: 800 * 100,
   tier1CommissionPercent: 10,
   tier2CommissionPercent: 2,
   tier3CommissionPercent: 1,
@@ -207,405 +225,296 @@ const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   depositBankName: 'Moniepoint Microfinance Bank',
   depositAccountNumber: '8129940182',
   depositAccountName: 'APPLE CARD INVESTMENT TECH NIGERIA',
-  wheelMinFriendInvestKobo: 200000 * 100, // ₦200,000
-  wheelMinUserInvestKobo: 500000 * 100, // ₦500,000
+  wheelMinFriendInvestKobo: 200000 * 100,
+  wheelMinUserInvestKobo: 500000 * 100,
 };
+
+const EMPTY_REFERRAL_STATS = (settings: AdminSettings) => ({
+  tier1: {
+    tier: 1 as const,
+    percentage: settings.tier1CommissionPercent,
+    membersCount: 0,
+    earningsKobo: 0,
+  },
+  tier2: {
+    tier: 2 as const,
+    percentage: settings.tier2CommissionPercent,
+    membersCount: 0,
+    earningsKobo: 0,
+  },
+  tier3: {
+    tier: 3 as const,
+    percentage: settings.tier3CommissionPercent,
+    membersCount: 0,
+    earningsKobo: 0,
+  },
+  totalMembers: 0,
+  pendingRewardsKobo: 0,
+  verifiedRewardsKobo: 0,
+});
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [showSplash, setShowSplash] = useState<boolean>(true);
-
-  // Authenticated user starts as NULL so user MUST register or sign in after splash!
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem('aci_user');
-    if (!saved) return null;
-    try {
-      const parsed: UserProfile = JSON.parse(saved);
-      // STRICT ADMIN LOCK: Nobody except emmanuelchidalu67@gmail.com can ever have admin role
-      if (parsed.email?.toLowerCase() !== 'emmanuelchidalu67@gmail.com') {
-        parsed.role = 'user';
-      }
-      return parsed;
-    } catch {
-      return null;
-    }
-  });
-
-  // Directory of all registered users (recorded for admin panel)
-  const [allUsers, setAllUsers] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem('aci_all_users');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return [INITIAL_ADMIN_USER];
-      }
-    }
-    return [INITIAL_ADMIN_USER];
-  });
-
-  const [activeTab, setActiveTab] = useState<'home' | 'plans' | 'invest' | 'team' | 'profile' | 'admin'>('home');
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [activeTab, setActiveTabState] = useState<'home' | 'plans' | 'invest' | 'team' | 'profile' | 'admin'>('home');
   const [authView, setAuthView] = useState<'login' | 'signup' | 'forgot_password' | 'verify_otp' | null>('signup');
-  const [tempOtpUser, setTempOtpUser] = useState<UserProfile | null>(null);
   const [showCommunityModal, setShowCommunityModal] = useState<boolean>(false);
-
-  // Canvas celebration state
   const [celebrationData, setCelebrationData] = useState<CelebrationData | null>(null);
 
-  // Admin Settings (15% withdrawal fee, weekend restrictions, etc.)
-  const [adminSettings, setAdminSettings] = useState<AdminSettings>(() => {
-    const saved = localStorage.getItem('aci_admin_settings');
-    return saved ? JSON.parse(saved) : DEFAULT_ADMIN_SETTINGS;
+  // Public + Personal Hydrated States
+  const [adminSettings, setAdminSettings] = useState<AdminSettings>(DEFAULT_ADMIN_SETTINGS);
+  const [plans, setPlans] = useState<InvestmentPlan[]>(INITIAL_INVESTMENT_PLANS);
+  const [availableBalanceKobo, setAvailableBalanceKobo] = useState<number>(0);
+  const [investedCapitalKobo, setInvestedCapitalKobo] = useState<number>(0);
+  const [verifiedEarningsKobo, setVerifiedEarningsKobo] = useState<number>(0);
+  const [pendingWithdrawalKobo, setPendingWithdrawalKobo] = useState<number>(0);
+  const [userInvestments, setUserInvestments] = useState<UserInvestment[]>([]);
+  const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [topUpCodes, setTopUpCodes] = useState<TopUpCode[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [referralStats, setReferralStats] = useState(() => EMPTY_REFERRAL_STATS(DEFAULT_ADMIN_SETTINGS));
+  const [downlines, setDownlines] = useState<UserProfile[]>([]);
+  const [downlineMaxInvestKobo, setDownlineMaxInvestKobo] = useState<number>(0);
+  const [publicFeedWithdrawals, setPublicFeedWithdrawals] = useState<TransactionRecord[]>([]);
+
+  // Admin-only states (never populated unless authenticated user is ADMIN_EMAIL)
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [adminTransactions, setAdminTransactions] = useState<TransactionRecord[]>([]);
+  const [adminInvestments, setAdminInvestments] = useState<UserInvestment[]>([]);
+  const [adminBankAccounts, setAdminBankAccounts] = useState<BankAccount[]>([]);
+  const [adminTopUpCodes, setAdminTopUpCodes] = useState<TopUpCode[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [adminStats, setAdminStats] = useState<AdminStats>({
+    totalActiveCapitalPoolKobo: 0,
+    totalUserBalancesKobo: 0,
+    totalUserEarnedKobo: 0,
   });
 
-  // Clean financial states starting at 0
-  const [availableBalanceKobo, setAvailableBalanceKobo] = useState<number>(() => {
-    const saved = localStorage.getItem('aci_bal');
-    return saved !== null ? Number(saved) : 0;
-  });
+  // Live 1-second ticking clock for real-time yield counting
+  const [liveClockMs, setLiveClockMs] = useState<number>(() => Date.now());
+  const lastCycleRefreshRef = useRef<number>(0);
 
-  const [pendingWithdrawalKobo, setPendingWithdrawalKobo] = useState<number>(() => {
-    const saved = localStorage.getItem('aci_pending_wth');
-    return saved !== null ? Number(saved) : 0;
-  });
+  const isSoleAdmin = Boolean(
+    user && user.role === 'admin' && user.email?.toLowerCase() === ADMIN_EMAIL
+  );
 
-  const [plans, setPlans] = useState<InvestmentPlan[]>(() => {
-    const saved = localStorage.getItem('aci_plans');
-    return saved ? JSON.parse(saved) : INITIAL_INVESTMENT_PLANS;
-  });
-
-  // Initial user investments start EMPTY
-  const [userInvestments, setUserInvestments] = useState<UserInvestment[]>(() => {
-    const saved = localStorage.getItem('aci_investments');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Initial transactions start EMPTY
-  const [transactions, setTransactions] = useState<TransactionRecord[]>(() => {
-    const saved = localStorage.getItem('aci_txs');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => {
-    const saved = localStorage.getItem('aci_banks');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [topUpCodes, setTopUpCodes] = useState<TopUpCode[]>(() => {
-    const saved = localStorage.getItem('aci_topup_codes');
-    return saved
-      ? JSON.parse(saved)
-      : [
-          {
-            id: 'top-1',
-            code: 'APPLE2026',
-            amountKobo: 2500 * 100,
-            totalLimit: 500,
-            claimedCount: 0,
-            claimedUserIds: [],
-            expiryDate: '2026-12-31',
-            description: 'Special Launch Promo Top-Up for verified diamond investors.',
-            status: 'active',
-          },
-          {
-            id: 'top-2',
-            code: 'VIPWELCOME',
-            amountKobo: 1500 * 100,
-            totalLimit: 1000,
-            claimedCount: 0,
-            claimedUserIds: [],
-            expiryDate: '2026-11-30',
-            description: 'Executive community welcoming voucher.',
-            status: 'active',
-          },
-        ];
-  });
-
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    const saved = localStorage.getItem('aci_notifications');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(() => {
-    const saved = localStorage.getItem('aci_audit');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Sync state to localStorage
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('aci_user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('aci_user');
+  const applyHydratedState = useCallback((state: any) => {
+    if (!state || !state.user) return;
+    const u: UserProfile = { ...state.user };
+    if (u.email?.toLowerCase() !== ADMIN_EMAIL) {
+      u.role = 'user';
     }
-  }, [user]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_all_users', JSON.stringify(allUsers));
-  }, [allUsers]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_admin_settings', JSON.stringify(adminSettings));
-  }, [adminSettings]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_bal', availableBalanceKobo.toString());
-  }, [availableBalanceKobo]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_pending_wth', pendingWithdrawalKobo.toString());
-  }, [pendingWithdrawalKobo]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_plans', JSON.stringify(plans));
-  }, [plans]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_investments', JSON.stringify(userInvestments));
-  }, [userInvestments]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_txs', JSON.stringify(transactions));
-  }, [transactions]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_banks', JSON.stringify(bankAccounts));
-  }, [bankAccounts]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_topup_codes', JSON.stringify(topUpCodes));
-  }, [topUpCodes]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem('aci_audit', JSON.stringify(auditLogs));
-  }, [auditLogs]);
-
-  // AUTOMATED 24-HOUR INVESTMENT YIELD CREDITING ENGINE
-  // Requirement: "no one can claim it is auto credit every 24hrs no user including the admin can claim until 24hrs it will credit instantly to the user dashboard"
-  useEffect(() => {
-    const processDailyAutoCredits = () => {
-      const now = Date.now();
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
-      setUserInvestments((prevInvestments) => {
-        let hasChanges = false;
-        let totalCreditedKobo = 0;
-        const newTransactions: TransactionRecord[] = [];
-
-        const updated = prevInvestments.map((inv) => {
-          if (inv.status !== 'Active') return inv;
-
-          const lastClaim = new Date(inv.lastClaimDate || inv.startDate).getTime();
-          const elapsedMs = now - lastClaim;
-
-          // If at least 24 hours have elapsed since start / last cycle
-          if (elapsedMs >= ONE_DAY_MS) {
-            hasChanges = true;
-            const cyclesToCredit = Math.floor(elapsedMs / ONE_DAY_MS);
-            const remainingDays = inv.durationDays - inv.daysElapsed;
-            const daysToApply = Math.min(cyclesToCredit, remainingDays);
-
-            if (daysToApply <= 0) return inv;
-
-            const yieldToAdd = inv.dailyReturnKobo * daysToApply;
-            const newDaysElapsed = inv.daysElapsed + daysToApply;
-            const isCompleted = newDaysElapsed >= inv.durationDays;
-            const newLastClaimDate = new Date(lastClaim + daysToApply * ONE_DAY_MS).toISOString();
-
-            totalCreditedKobo += yieldToAdd;
-
-            newTransactions.push({
-              id: `tx-auto-${Date.now()}-${inv.id}`,
-              reference: generateReference('AUTOPAY'),
-              userId: inv.userId,
-              type: 'daily_earning',
-              title: `${inv.planName} 24h Automated Yield`,
-              description: `Automated 24-hour cycle return (${daysToApply} day cycle) credited to dashboard.`,
-              amountKobo: yieldToAdd,
-              status: 'Completed',
-              date: new Date().toISOString(),
-            });
-
-            return {
-              ...inv,
-              daysElapsed: newDaysElapsed,
-              earnedKobo: inv.earnedKobo + yieldToAdd,
-              lastClaimDate: newLastClaimDate,
-              status: isCompleted ? ('Completed' as const) : ('Active' as const),
-            };
-          }
-          return inv;
-        });
-
-        if (hasChanges && totalCreditedKobo > 0) {
-          setAvailableBalanceKobo((prev) => prev + totalCreditedKobo);
-          if (newTransactions.length > 0) {
-            setTransactions((prev) => [...newTransactions, ...prev]);
-          }
-          addNotification(
-            '24-Hour Investment Yield Auto-Credited',
-            `₦${(totalCreditedKobo / 100).toLocaleString()} in automated daily returns has been deposited to your dashboard balance.`,
-            'reward'
-          );
-        }
-
-        return hasChanges ? updated : prevInvestments;
-      });
-    };
-
-    processDailyAutoCredits();
-    const interval = setInterval(processDailyAutoCredits, 30000);
-    return () => clearInterval(interval);
+    setUser(u);
+    setAuthView(null);
+    setAvailableBalanceKobo(Number(state.availableBalanceKobo) || 0);
+    setInvestedCapitalKobo(Number(state.investedCapitalKobo) || 0);
+    setVerifiedEarningsKobo(Number(state.verifiedEarningsKobo) || 0);
+    setPendingWithdrawalKobo(Number(state.pendingWithdrawalKobo) || 0);
+    if (Array.isArray(state.plans)) setPlans(state.plans);
+    if (Array.isArray(state.userInvestments)) setUserInvestments(state.userInvestments);
+    if (Array.isArray(state.transactions)) setTransactions(state.transactions);
+    if (Array.isArray(state.bankAccounts)) setBankAccounts(state.bankAccounts);
+    if (Array.isArray(state.topUpCodes)) setTopUpCodes(state.topUpCodes);
+    if (Array.isArray(state.notifications)) setNotifications(state.notifications);
+    if (state.adminSettings) setAdminSettings(state.adminSettings);
+    if (state.referralStats) setReferralStats(state.referralStats);
+    if (Array.isArray(state.downlines)) setDownlines(state.downlines);
+    setDownlineMaxInvestKobo(Number(state.downlineMaxInvestKobo) || 0);
+    if (Array.isArray(state.publicFeedWithdrawals)) setPublicFeedWithdrawals(state.publicFeedWithdrawals);
   }, []);
 
-  // Derived calculations with custom balance overrides from admin ledger
-  const investedCapitalKobo =
-    (user?.investedBalanceKobo !== undefined ? user.investedBalanceKobo : 0) +
-    userInvestments
-      .filter((inv) => (!user || inv.userId === user.id) && inv.status === 'Active')
-      .reduce((sum, inv) => sum + inv.capitalKobo, 0);
+  const applyAdminDashboardData = useCallback((adminData: any) => {
+    if (!adminData) return;
+    if (Array.isArray(adminData.allUsers)) setAllUsers(adminData.allUsers);
+    if (Array.isArray(adminData.plans)) setPlans(adminData.plans);
+    if (Array.isArray(adminData.userInvestments)) setAdminInvestments(adminData.userInvestments);
+    if (Array.isArray(adminData.transactions)) setAdminTransactions(adminData.transactions);
+    if (Array.isArray(adminData.bankAccounts)) setAdminBankAccounts(adminData.bankAccounts);
+    if (Array.isArray(adminData.topUpCodes)) setAdminTopUpCodes(adminData.topUpCodes);
+    if (Array.isArray(adminData.auditLogs)) setAuditLogs(adminData.auditLogs);
+    if (adminData.adminSettings) setAdminSettings(adminData.adminSettings);
+    if (adminData.stats) setAdminStats(adminData.stats);
+  }, []);
 
-  const verifiedEarningsKobo =
-    (user?.totalEarnedKobo !== undefined ? user.totalEarnedKobo : 0) +
-    userInvestments
-      .filter((inv) => !user || inv.userId === user.id)
-      .reduce((sum, inv) => sum + inv.earnedKobo, 0) +
-    transactions
-      .filter((tx) => (!user || tx.userId === user.id) && tx.status === 'Completed' && (tx.type === 'referral_bonus' || tx.type === 'topup_code'))
-      .reduce((sum, tx) => sum + tx.amountKobo, 0);
+  const clearAuthenticatedState = useCallback(() => {
+    setInMemorySessionToken(null);
+    setUser(null);
+    setActiveTabState('home');
+    setAuthView('signup');
+    setAvailableBalanceKobo(0);
+    setInvestedCapitalKobo(0);
+    setVerifiedEarningsKobo(0);
+    setPendingWithdrawalKobo(0);
+    setUserInvestments([]);
+    setTransactions([]);
+    setBankAccounts([]);
+    setTopUpCodes([]);
+    setNotifications([]);
+    setDownlines([]);
+    setDownlineMaxInvestKobo(0);
+    setAllUsers([]);
+    setAdminTransactions([]);
+    setAdminInvestments([]);
+    setAdminBankAccounts([]);
+    setAdminTopUpCodes([]);
+    setAuditLogs([]);
+    setAdminStats({
+      totalActiveCapitalPoolKobo: 0,
+      totalUserBalancesKobo: 0,
+      totalUserEarnedKobo: 0,
+    });
+  }, []);
 
-  // Notifications: Strictly filtered per user
-  const userNotifications = notifications.filter((n) => {
-    if (!user) return n.userId === 'guest' || n.userId === 'all';
-    return n.userId === user.id || n.userId === 'all';
-  });
-
-  const unreadNotificationCount = userNotifications.filter((n) => !n.isRead).length;
-
-  const addNotification = (
-    title: string,
-    message: string,
-    type: NotificationItem['type'] = 'system',
-    targetUserId?: string
-  ) => {
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      userId: targetUserId || user?.id || 'guest',
-      title,
-      message,
-      type,
-      isRead: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-  };
-
-  const markNotificationAsRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
-    );
-  };
-
-  const markAllNotificationsAsRead = () => {
-    setNotifications((prev) =>
-      prev.map((n) => {
-        if (!user || n.userId === user.id || n.userId === 'all' || n.userId === 'guest') {
-          return { ...n, isRead: true };
-        }
-        return n;
-      })
-    );
-  };
-
-  // AUTH: Login
-  // Requirement: "any user that registers with emmanuelchidalu67@gmail.com and 241166 is the admin of the panel"
-  const login = (identifier: string, pass: string) => {
-    if (!identifier || !pass) {
-      return { success: false, error: 'Please enter your email/phone and password.' };
-    }
-
-    const cleanIdentifier = identifier.trim().toLowerCase();
-    const cleanPass = pass.trim();
-
-    // Check special admin credential
-    if (cleanIdentifier === 'emmanuelchidalu67@gmail.com' && cleanPass === '241166') {
-      const adminUser: UserProfile = {
-        id: 'usr-admin-emmanuel',
-        fullName: 'Emmanuel Chidalu (Admin)',
-        email: 'emmanuelchidalu67@gmail.com',
-        phone: '08100241166',
-        countryCode: '+234',
-        accountNumberId: 'ACI-000001',
-        referralCode: 'EMMANUEL24',
-        avatarInitials: 'EC',
-        isVerified: true,
-        welcomeBonusClaimed: true,
-        registrationDate: '2026-10-01T08:00:00.000Z',
-        withdrawalPinSet: true,
-        role: 'admin',
-      };
-      setUser(adminUser);
-      setAuthView(null);
-      addNotification('Admin Login Authorized', 'Welcome back, Emmanuel Chidalu. Full administrative controls unlocked.');
-      return { success: true };
-    }
-
-    // Regular user lookup from registered users
-    const found = allUsers.find(
-      (u) =>
-        u.email.toLowerCase() === cleanIdentifier ||
-        u.phone.replace(/\D/g, '') === cleanIdentifier.replace(/\D/g, '')
-    );
-
-    if (found) {
-      if (found.isSuspended) {
-        return {
-          success: false,
-          error: 'This account has been suspended by administration. Contact official WhatsApp support.',
-        };
+  const refreshState = useCallback(async () => {
+    const res = await apiRequest('/api/state');
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      if (res.adminData) {
+        applyAdminDashboardData(res.adminData);
       }
-      setUser(found);
-      if (found.balanceKobo !== undefined) setAvailableBalanceKobo(found.balanceKobo);
-      setAuthView(null);
-      addNotification('Login Successful', `Welcome back, ${found.fullName}! Portfolio loaded.`);
-      return { success: true };
     }
+  }, [applyHydratedState, applyAdminDashboardData]);
 
-    // If not in database yet, require proper password length
-    if (pass.length < 6) {
-      return { success: false, error: 'Password must be at least 6 characters.' };
+  const refreshAdminDashboard = useCallback(async () => {
+    const res = await apiRequest('/api/admin/dashboard');
+    if (res?.success && res.adminData) {
+      applyAdminDashboardData(res.adminData);
     }
+  }, [applyAdminDashboardData]);
 
-    const fallbackUser: UserProfile = {
-      id: `usr-${Date.now().toString(36)}`,
-      fullName: cleanIdentifier.includes('@') ? cleanIdentifier.split('@')[0] : 'Investor',
-      email: cleanIdentifier.includes('@') ? cleanIdentifier : `${cleanIdentifier}@applecard.ng`,
-      phone: !cleanIdentifier.includes('@') ? cleanIdentifier : '08123456789',
-      countryCode: '+234',
-      accountNumberId: `ACI-${Math.floor(100000 + Math.random() * 900000)}`,
-      referralCode: `APPLE${Math.floor(100 + Math.random() * 900)}`,
-      avatarInitials: 'AI',
-      isVerified: true,
-      welcomeBonusClaimed: true,
-      registrationDate: new Date().toISOString(),
-      withdrawalPinSet: true,
-      role: 'user',
+  // Set activeTab with immediate admin dashboard fetch + non-admin guard
+  const setActiveTab = useCallback(
+    (tab: 'home' | 'plans' | 'invest' | 'team' | 'profile' | 'admin') => {
+      if (tab === 'admin' && !isSoleAdmin) {
+        setActiveTabState('home');
+        return;
+      }
+      setActiveTabState(tab);
+      if (tab === 'admin' && isSoleAdmin) {
+        void refreshAdminDashboard();
+      }
+    },
+    [isSoleAdmin, refreshAdminDashboard]
+  );
+
+  // Bootstrap public settings & restore authenticated cookie session on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function bootstrap() {
+      const pub = await apiRequest('/api/public/bootstrap');
+      if (!cancelled && pub?.success) {
+        if (pub.adminSettings) setAdminSettings(pub.adminSettings);
+        if (Array.isArray(pub.plans)) setPlans(pub.plans);
+        if (Array.isArray(pub.publicFeedWithdrawals)) setPublicFeedWithdrawals(pub.publicFeedWithdrawals);
+      }
+
+      const st = await apiRequest('/api/state');
+      if (!cancelled && st?.success && st.state) {
+        applyHydratedState(st.state);
+        if (st.adminData) {
+          applyAdminDashboardData(st.adminData);
+        }
+      }
+    }
+    void bootstrap();
+    return () => {
+      cancelled = true;
     };
+  }, [applyHydratedState, applyAdminDashboardData]);
 
-    setUser(fallbackUser);
-    setAllUsers((prev) => [fallbackUser, ...prev.filter((u) => u.email !== fallbackUser.email)]);
-    setAuthView(null);
+  // Real-time Server-Sent Events subscription when authenticated
+  useEffect(() => {
+    if (!user) return;
+    let source: EventSource | null = null;
+    try {
+      source = new EventSource('/api/events', { withCredentials: true });
+      source.addEventListener('sync', () => {
+        void refreshState();
+        if (isSoleAdmin) {
+          void refreshAdminDashboard();
+        }
+      });
+    } catch {
+      // Fallback polling below keeps UI fresh
+    }
+
+    return () => {
+      source?.close();
+    };
+  }, [user?.id, isSoleAdmin, refreshState, refreshAdminDashboard]);
+
+  // Fast background sync when Admin Portal is open (every 4s) so new registrations show instantly
+  useEffect(() => {
+    if (!isSoleAdmin || activeTab !== 'admin') return;
+    const timer = setInterval(() => {
+      void refreshAdminDashboard();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [isSoleAdmin, activeTab, refreshAdminDashboard]);
+
+  // Live 1-second yield ticking + automatic 24h cycle settlement refresh
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setLiveClockMs(now);
+
+      if (user) {
+        const dueInv = userInvestments.some((inv) => {
+          if (inv.status !== 'Active') return false;
+          const lastClaim = new Date(inv.lastClaimDate || inv.startDate).getTime();
+          return now - lastClaim >= ONE_DAY_MS && inv.daysElapsed < inv.durationDays;
+        });
+        if (dueInv && now - lastCycleRefreshRef.current > 10000) {
+          lastCycleRefreshRef.current = now;
+          void refreshState();
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [user, userInvestments, refreshState]);
+
+  // Calculate live fractional accruing yield across all active plans
+  const activeUserInvs = userInvestments.filter((inv) => inv.status === 'Active');
+  const liveAccruingKobo = activeUserInvs.reduce((sum, inv) => {
+    const lastClaim = new Date(inv.lastClaimDate || inv.startDate).getTime();
+    const elapsedInCycle = Math.min(ONE_DAY_MS, Math.max(0, liveClockMs - lastClaim));
+    return sum + (inv.dailyReturnKobo * elapsedInCycle) / ONE_DAY_MS;
+  }, 0);
+
+  const perSecondYieldKobo = activeUserInvs.reduce((sum, inv) => {
+    return sum + inv.dailyReturnKobo / 86400;
+  }, 0);
+
+  const totalLiveProfitKobo = verifiedEarningsKobo + liveAccruingKobo;
+
+  const unreadNotificationCount = notifications.filter((n) => !n.isRead).length;
+
+  // ==========================================
+  // AUTH ACTIONS
+  // ==========================================
+  const login = async (identifier: string, pass: string) => {
+    const res = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, password: pass }),
+    });
+    if (!res?.success || !res.state) {
+      return { success: false, error: res?.error || 'Login failed. Please check your credentials.' };
+    }
+    if (res.sessionToken) {
+      setInMemorySessionToken(res.sessionToken);
+    }
+    applyHydratedState(res.state);
+    if (res.adminData) {
+      applyAdminDashboardData(res.adminData);
+    }
+    setActiveTabState('home');
+    setShowCommunityModal(true);
     return { success: true };
   };
 
-  // AUTH: Signup
-  // Requirement:
-  // "every user that registers should be recorded in the admin panel"
-  // "any user that registers with emmanuelchidalu67@gmail.com and 241166 is the admin of the panel"
-  const signup = (data: {
+  const signup = async (data: {
     fullName: string;
     email: string;
     phone: string;
@@ -614,443 +523,115 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     password?: string;
     referralCode?: string;
   }) => {
-    if (!data.fullName || !data.email || !data.phone || !data.withdrawalPin) {
-      return { success: false, error: 'All fields are required.' };
-    }
-
-    const cleanEmail = data.email.trim().toLowerCase();
-    const cleanPassword = (data.password || '').trim();
-
-    // STRICT ADMIN REQUIREMENT: Only emmanuelchidalu67@gmail.com with password 241166 is admin. No other user.
-    const isAdmin = cleanEmail === 'emmanuelchidalu67@gmail.com' && cleanPassword === '241166';
-
-    const bonusKobo = adminSettings.welcomeBonusKobo; // ₦800 = 80,000 kobo
-
-    const newUser: UserProfile = {
-      id: `usr-${Date.now().toString(36)}`,
-      fullName: data.fullName.trim(),
-      email: cleanEmail,
-      phone: data.phone.trim(),
-      countryCode: data.countryCode,
-      accountNumberId: `ACI-${Math.floor(100000 + Math.random() * 900000)}`,
-      referralCode: data.fullName.split(' ')[0].toUpperCase() + Math.floor(10 + Math.random() * 90),
-      referredBy: data.referralCode?.trim() || undefined,
-      avatarInitials: data.fullName
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2),
-      isVerified: true,
-      welcomeBonusClaimed: true,
-      registrationDate: new Date().toISOString(),
-      withdrawalPinSet: true,
-      role: isAdmin ? 'admin' : 'user',
-      balanceKobo: bonusKobo,
-      investedBalanceKobo: 0,
-      totalEarnedKobo: 0,
-      vipLevel: 0,
-      spinBalance: 0,
-    };
-
-    // Save user in allUsers and localStorage for instant live recording in admin panel
-    setAllUsers((prev) => {
-      const updated = [newUser, ...prev.filter((u) => u.email !== newUser.email)];
-      localStorage.setItem('aci_all_users', JSON.stringify(updated));
-      return updated;
+    const res = await apiRequest('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
-
-    setUser(newUser);
-    localStorage.setItem('aci_user', JSON.stringify(newUser));
-    setAvailableBalanceKobo(bonusKobo);
-    setAuthView(null);
-
-    // Record welcome bonus transaction
-    const bonusTx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: generateReference('REF'),
-      userId: newUser.id,
-      userEmail: newUser.email,
-      type: 'welcome_bonus',
-      title: '₦800 Welcome Bonus (Auto-Credited)',
-      description: 'New account registration reward automatically deposited to your verified balance.',
-      amountKobo: bonusKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-    };
-    setTransactions((prev) => [bonusTx, ...prev]);
-
-    addNotification(
-      '₦800 Welcome Bonus Auto-Credited',
-      'Welcome to Apple Card Investment! Your ₦800 registration bonus was automatically added to your available balance.',
-      'reward'
-    );
-
-    // Show community modal
+    if (!res?.success || !res.state) {
+      return { success: false, error: res?.error || 'Registration failed. Please try again.' };
+    }
+    if (res.sessionToken) {
+      setInMemorySessionToken(res.sessionToken);
+    }
+    applyHydratedState(res.state);
+    setActiveTabState('home');
     setShowCommunityModal(true);
-
     return { success: true };
   };
 
-  // AUTH: OTP Verification & Auto Welcome Bonus Credit
-  // Requirement: "in the welcome bonus auto add not user claim and make everything smooth working"
-  // "every user that registers should be recorded in the admin panel"
-  const verifyOtp = (code: string) => {
-    if (code.length < 6) {
-      return { success: false, error: 'Please enter the complete 6-digit OTP code.' };
-    }
-    if (tempOtpUser) {
-      const bonusKobo = adminSettings.welcomeBonusKobo; // ₦800 = 80,000 kobo
+  const logout = async () => {
+    await apiRequest('/api/auth/logout', { method: 'POST' });
+    clearAuthenticatedState();
+  };
 
-      const verifiedUser: UserProfile = {
-        ...tempOtpUser,
-        isVerified: true,
-        welcomeBonusClaimed: true, // auto claimed!
-        balanceKobo: bonusKobo,
-        investedBalanceKobo: 0,
-        totalEarnedKobo: 0,
-        vipLevel: 0,
-        spinBalance: 0,
-      };
-
-      // Record in allUsers so admin panel sees every registered user instantly!
-      setAllUsers((prev) => {
-        const updated = [verifiedUser, ...prev.filter((u) => u.email !== verifiedUser.email)];
-        localStorage.setItem('aci_all_users', JSON.stringify(updated));
-        return updated;
-      });
-      setUser(verifiedUser);
-      localStorage.setItem('aci_user', JSON.stringify(verifiedUser));
-      setTempOtpUser(null);
-      setAuthView(null);
-
-      // Fresh user starts with exactly ₦800 Welcome Bonus, no fake access or investments
-      setAvailableBalanceKobo(bonusKobo);
-
-      // Record in financial ledger
-      const bonusTx: TransactionRecord = {
-        id: `tx-${Date.now()}`,
-        reference: generateReference('REF'),
-        userId: verifiedUser.id,
-        userEmail: verifiedUser.email,
-        type: 'welcome_bonus',
-        title: '₦800 Welcome Bonus (Auto-Credited)',
-        description: 'New account registration reward automatically deposited to your verified balance.',
-        amountKobo: bonusKobo,
-        status: 'Completed',
-        date: new Date().toISOString(),
-      };
-      setTransactions((prev) => [bonusTx, ...prev]);
-
-      addNotification(
-        '₦800 Welcome Bonus Auto-Credited',
-        'Welcome to Apple Card Investment! Your ₦800 registration bonus was automatically added to your available balance.',
-        'reward'
-      );
-
-      // Automatically show Official WhatsApp group, Telegram channel, and explanation
-      setShowCommunityModal(true);
-
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    const res = await apiRequest('/api/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
       return { success: true };
     }
-    return { success: false, error: 'Verification session expired. Please sign up again.' };
+    return { success: false, error: res?.error || 'Failed to update profile.' };
   };
 
-  const logout = () => {
-    setUser(null);
-    setShowSplash(false);
-    setAuthView('login');
-  };
-
-  const updateProfile = (updates: Partial<UserProfile>) => {
-    if (!user) return;
-    const updated = { ...user, ...updates };
-    setUser(updated);
-    setAllUsers((prev) => prev.map((u) => (u.id === user.id ? updated : u)));
-  };
-
-  const updateWithdrawalPin = (newPin: string) => {
-    if (newPin.length !== 4) return { success: false };
-    if (user) {
-      const updated = { ...user, withdrawalPinSet: true };
-      setUser(updated);
-      setAllUsers((prev) => prev.map((u) => (u.id === user.id ? updated : u)));
-      addNotification('Security PIN Updated', 'Your 4-digit withdrawal PIN was changed successfully.', 'security');
-    }
-    return { success: true };
-  };
-
-  // INVEST IN PLAN & Subtle Canvas Trigger
-  // Requirement: "Implement a subtle canvas-based animation that triggers when a user successfully completes a new investment, providing positive reinforcement."
-  const investInPlan = (planId: string) => {
-    if (!user) return { success: false, error: 'Please log in to invest.' };
-    const plan = plans.find((p) => p.id === planId);
-    if (!plan) return { success: false, error: 'Investment plan not found.' };
-
-    if (availableBalanceKobo < plan.capitalKobo) {
-      return {
-        success: false,
-        error: `Insufficient available balance. Required: ₦${(plan.capitalKobo / 100).toLocaleString()}. Please deposit first.`,
-      };
-    }
-
-    // Deduct capital
-    setAvailableBalanceKobo((prev) => prev - plan.capitalKobo);
-
-    const ref = generateReference('INV');
-    const startDate = new Date();
-    const maturityDate = new Date();
-    maturityDate.setDate(startDate.getDate() + plan.durationDays);
-
-    const newInvestment: UserInvestment = {
-      id: `inv-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      planId: plan.id,
-      planName: plan.name,
-      vipTier: plan.vipTier,
-      capitalKobo: plan.capitalKobo,
-      dailyReturnKobo: plan.dailyReturnKobo,
-      durationDays: plan.durationDays,
-      daysElapsed: 0,
-      totalPayoutKobo: plan.totalPayoutKobo,
-      earnedKobo: 0,
-      lastClaimDate: startDate.toISOString(),
-      startDate: startDate.toISOString(),
-      maturityDate: maturityDate.toISOString(),
-      status: 'Active',
-    };
-
-    setUserInvestments((prev) => [newInvestment, ...prev]);
-
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'investment',
-      title: `${plan.name} Activated`,
-      description: `Invested capital of ₦${(plan.capitalKobo / 100).toLocaleString()} for ${plan.durationDays} days.`,
-      amountKobo: plan.capitalKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-    };
-    setTransactions((prev) => [tx, ...prev]);
-
-    addNotification(
-      'Investment Started',
-      `You activated ${plan.name} with ₦${(plan.capitalKobo / 100).toLocaleString()}. Daily yield: ₦${(plan.dailyReturnKobo / 100).toLocaleString()}.`
-    );
-
-    // TRIGGER CANVAS CELEBRATION
-    setCelebrationData({
-      planName: plan.name,
-      capitalKobo: plan.capitalKobo,
-      dailyYieldKobo: plan.dailyReturnKobo,
+  const updateWithdrawalPin = async (newPin: string) => {
+    const res = await apiRequest('/api/profile/pin', {
+      method: 'POST',
+      body: JSON.stringify({ newPin }),
     });
-
-    return { success: true, reference: ref };
-  };
-
-  const dismissCelebration = () => {
-    setCelebrationData(null);
-  };
-
-  // Claim Daily Yield from Active Investment
-  const claimInvestmentYield = (investmentId: string) => {
-    const inv = userInvestments.find((i) => i.id === investmentId);
-    if (!inv) {
-      return { success: false, error: 'Investment not found or already completed.' };
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true };
     }
-    // Specific user rule: "in the invest no on can claim it is auto credit every 24hrs no user including the admin can claim until 24hrs it will credit instantly to the user dashboard"
-    const lastClaim = new Date(inv.lastClaimDate || inv.startDate).getTime();
-    const elapsedSince = Date.now() - lastClaim;
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
-    if (elapsedSince < ONE_DAY_MS) {
-      const remainingMs = ONE_DAY_MS - elapsedSince;
-      const hours = Math.floor(remainingMs / (1000 * 60 * 60));
-      const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-      return {
-        success: false,
-        error: `Yield is locked. Auto-credits to dashboard in ${hours}h ${minutes}m.`,
-      };
-    }
-
-    const dailyKobo = inv.dailyReturnKobo;
-    const newDaysElapsed = Math.min(inv.daysElapsed + 1, inv.durationDays);
-    const newEarned = inv.earnedKobo + dailyKobo;
-    const isCompleted = newDaysElapsed >= inv.durationDays;
-
-    setUserInvestments((prev) =>
-      prev.map((item) =>
-        item.id === investmentId
-          ? {
-              ...item,
-              daysElapsed: newDaysElapsed,
-              earnedKobo: newEarned,
-              lastClaimDate: new Date().toISOString(),
-              status: isCompleted ? 'Completed' : 'Active',
-            }
-          : item
-      )
-    );
-
-    setAvailableBalanceKobo((prev) => prev + dailyKobo);
-
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: generateReference('INV'),
-      userId: user?.id || 'usr-default',
-      userEmail: user?.email,
-      type: 'daily_earning',
-      title: `${inv.planName} Daily Payout`,
-      description: `Cycle day ${newDaysElapsed}/${inv.durationDays} verified payout credited.`,
-      amountKobo: dailyKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-    };
-    setTransactions((prev) => [tx, ...prev]);
-
-    addNotification(
-      'Daily Payout Credited',
-      `₦${(dailyKobo / 100).toLocaleString()} daily yield from ${inv.planName} added to your available balance.`
-    );
-
-    return { success: true, amountClaimedKobo: dailyKobo };
+    return { success: false, error: res?.error || 'Failed to update PIN.' };
   };
 
-  // Deposit Flow
-  const submitDeposit = (data: {
+  const updatePassword = async (currentPassword: string, newPassword: string) => {
+    const res = await apiRequest('/api/profile/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to update password.' };
+  };
+
+  // ==========================================
+  // INVESTMENTS & BANKING
+  // ==========================================
+  const investInPlan = async (planId: string) => {
+    const res = await apiRequest('/api/investments', {
+      method: 'POST',
+      body: JSON.stringify({ planId }),
+    });
+    if (!res?.success) {
+      return { success: false, error: res?.error || 'Failed to activate investment.' };
+    }
+    if (res.state) applyHydratedState(res.state);
+    if (res.celebration) setCelebrationData(res.celebration);
+    return { success: true, reference: res.reference };
+  };
+
+  const dismissCelebration = () => setCelebrationData(null);
+
+  const submitDeposit = async (data: {
     amountKobo: number;
     senderName: string;
     senderReference?: string;
     paymentMethod: string;
   }) => {
-    const ref = generateReference('DEP');
-    const depositTx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user?.id || 'usr-default',
-      userEmail: user?.email,
-      type: 'deposit',
-      title: 'Bank Transfer Deposit',
-      description: `Deposit via ${data.paymentMethod}. Sender: ${data.senderName}`,
-      amountKobo: data.amountKobo,
-      status: 'Pending',
-      date: new Date().toISOString(),
-      senderName: data.senderName,
-      paymentMethod: data.paymentMethod,
-      metadata: {
-        senderReference: data.senderReference,
-      },
-    };
-    setTransactions((prev) => [depositTx, ...prev]);
-    addNotification(
-      'Deposit Pending Verification',
-      `Deposit request for ₦${(data.amountKobo / 100).toLocaleString()} (Ref: ${ref}) is pending bank reconciliation.`
-    );
-    return { success: true, reference: ref };
+    const res = await apiRequest('/api/deposits', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true, reference: res.reference };
+    }
+    return { success: false, reference: '', error: res?.error || 'Deposit submission failed.' };
   };
 
-  // Withdrawal Flow
-  // Requirements:
-  // "the withdrawal fees should be 15%"
-  // "no withdrawals on Sat and Sunday and also everything admin should country it"
-  const submitWithdrawal = (data: {
+  const submitWithdrawal = async (data: {
     amountKobo: number;
     bankAccountId: string;
     withdrawalPin: string;
   }) => {
-    if (!user) return { success: false, error: 'Please log in to withdraw.' };
-    if (user.isWithdrawalBanned) {
-      return {
-        success: false,
-        error: 'Withdrawals for your account have been frozen by administration. Please contact customer support.',
-      };
+    const res = await apiRequest('/api/withdrawals', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true, reference: res.reference };
     }
-    const bank = bankAccounts.find((b) => b.id === data.bankAccountId);
-    if (!bank) return { success: false, error: 'Please select a valid destination bank account.' };
-
-    // Weekend check: 0 is Sunday, 6 is Saturday
-    const currentDay = new Date().getDay();
-    const isWeekend = currentDay === 0 || currentDay === 6;
-    if (isWeekend && !adminSettings.allowWeekendWithdrawals) {
-      return {
-        success: false,
-        error: 'Withdrawals are closed on Saturdays and Sundays. Please request payout during standard Nigerian banking days (Monday - Friday).',
-      };
-    }
-
-    const minKobo = 1000 * 100; // ₦1,000 min
-    const maxKobo = 5000000 * 100; // ₦5,000,000 max
-
-    if (data.amountKobo < minKobo) {
-      return { success: false, error: 'Minimum withdrawal amount is ₦1,000.' };
-    }
-    if (data.amountKobo > maxKobo) {
-      return { success: false, error: 'Maximum single withdrawal is ₦5,000,000.' };
-    }
-    if (availableBalanceKobo < data.amountKobo) {
-      return { success: false, error: 'Insufficient available balance.' };
-    }
-    if (data.withdrawalPin.length !== 4) {
-      return { success: false, error: 'Invalid 4-digit withdrawal PIN.' };
-    }
-
-    // Configurable fee percentage: 15% standard
-    const feePercent = adminSettings.withdrawalFeePercent;
-    const feeKobo = Math.round(data.amountKobo * (feePercent / 100));
-    const netPayoutKobo = data.amountKobo - feeKobo;
-
-    // Deduct from available balance, add to pending
-    setAvailableBalanceKobo((prev) => prev - data.amountKobo);
-    setPendingWithdrawalKobo((prev) => prev + data.amountKobo);
-
-    const ref = generateReference(bank.type === 'bep20' ? 'BEP' : 'WTH');
-    const isBep20 = bank.type === 'bep20';
-    const withdrawalTx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'withdrawal',
-      title: isBep20 ? 'USDT BEP-20 Withdrawal' : 'Bank Withdrawal Request',
-      description: isBep20
-        ? `USDT payout to ${bank.accountNumber.slice(0, 8)}...${bank.accountNumber.slice(-6)} (BEP-20)`
-        : `Withdrawal to ${bank.bankName} (${bank.accountNumber})`,
-      amountKobo: data.amountKobo,
-      feeKobo: feeKobo,
-      status: 'Pending',
-      date: new Date().toISOString(),
-      bankDetails: {
-        bankName: bank.bankName,
-        accountNumber: bank.accountNumber,
-        accountName: bank.accountName,
-      },
-      metadata: {
-        netPayoutKobo,
-        feePercent,
-        isBep20,
-        usdtEstimate: isBep20
-          ? ((netPayoutKobo / 100) / (adminSettings.usdtExchangeRateNaira || 1550)).toFixed(2)
-          : undefined,
-      },
-    };
-
-    setTransactions((prev) => [withdrawalTx, ...prev]);
-    addNotification(
-      'Withdrawal Submitted',
-      isBep20
-        ? `Withdrawal of ₦${(data.amountKobo / 100).toLocaleString()} (~$${((netPayoutKobo / 100) / (adminSettings.usdtExchangeRateNaira || 1550)).toFixed(2)} USDT) to your BEP-20 address is queued for settlement.`
-        : `Withdrawal of ₦${(data.amountKobo / 100).toLocaleString()} (Net: ₦${(netPayoutKobo / 100).toLocaleString()} after ${feePercent}% processing fee) to ${bank.bankName} is queued for approval.`
-    );
-
-    return { success: true, reference: ref };
+    return { success: false, error: res?.error || 'Withdrawal submission failed.' };
   };
 
-  // Bank Accounts & BEP-20 Wallet Management
-  const addBankAccount = (data: {
+  const addBankAccount = async (data: {
     bankName: string;
     bankCode: string;
     accountNumber: string;
@@ -1059,418 +640,225 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     bep20Address?: string;
     network?: string;
   }) => {
-    if (!user) return { success: false, error: 'Please log in.' };
-    const isBep20 = data.type === 'bep20';
-
-    if (!isBep20 && data.accountNumber.length !== 10) {
-      return { success: false, error: 'Nigerian account number must be exactly 10 digits.' };
+    const res = await apiRequest('/api/banks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true };
     }
-    if (isBep20 && (!data.accountNumber.startsWith('0x') || data.accountNumber.length < 25)) {
-      return { success: false, error: 'BEP-20 address must be a valid BSC wallet starting with 0x.' };
-    }
-    if (!data.accountName.trim()) {
-      return { success: false, error: isBep20 ? 'Please enter a wallet label/name.' : 'Please enter your account holder name.' };
-    }
-
-    const newAccount: BankAccount = {
-      id: `bnk-${Date.now()}`,
-      userId: user.id,
-      type: data.type || 'bank',
-      bankName: data.bankName,
-      bankCode: data.bankCode,
-      accountNumber: data.accountNumber.trim(),
-      accountName: data.accountName.trim(),
-      bep20Address: isBep20 ? data.accountNumber.trim() : undefined,
-      network: isBep20 ? (data.network || 'BNB Smart Chain (BEP-20)') : undefined,
-      isDefault: bankAccounts.length === 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    setBankAccounts((prev) => [...prev, newAccount]);
-    addNotification(
-      isBep20 ? 'BEP-20 Address Linked' : 'Bank Account Added',
-      `${data.bankName} (${data.accountNumber.slice(0, 6)}...${data.accountNumber.slice(-4)}) successfully saved.`
-    );
-    return { success: true };
+    return { success: false, error: res?.error || 'Failed to add bank account.' };
   };
 
-  const deleteBankAccount = (id: string) => {
-    setBankAccounts((prev) => prev.filter((b) => b.id !== id));
-    addNotification('Bank Account Removed', 'Bank account was removed from your profile.');
+  const deleteBankAccount = async (id: string) => {
+    const res = await apiRequest(`/api/banks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+    }
   };
 
-  const setDefaultBankAccount = (id: string) => {
-    setBankAccounts((prev) =>
-      prev.map((b) => ({ ...b, isDefault: b.id === id }))
-    );
+  const setDefaultBankAccount = async (id: string) => {
+    const res = await apiRequest(`/api/banks/${encodeURIComponent(id)}/default`, {
+      method: 'PATCH',
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+    }
   };
 
-  // Top-Up Code Redemption
-  const redeemTopUpCode = (codeStr: string) => {
-    if (!user) return { success: false, message: 'Please log in first.' };
-    const cleanCode = codeStr.trim().toUpperCase();
-    const target = topUpCodes.find((c) => c.code.toUpperCase() === cleanCode);
-
-    if (!target) {
-      return { success: false, message: 'Invalid top-up code. Please check and try again.' };
+  const redeemTopUpCode = async (codeStr: string) => {
+    const res = await apiRequest('/api/topup/redeem', {
+      method: 'POST',
+      body: JSON.stringify({ code: codeStr }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
     }
-    if (target.status !== 'active') {
-      return { success: false, message: 'This top-up code has expired or is deactivated.' };
-    }
-    if (target.claimedUserIds.includes(user.id)) {
-      return { success: false, message: 'You have already redeemed this code on your account.' };
-    }
-    if (target.claimedCount >= target.totalLimit) {
-      return { success: false, message: 'This promo code has reached its maximum redemption limit.' };
-    }
-
-    setAvailableBalanceKobo((prev) => prev + target.amountKobo);
-
-    setTopUpCodes((prev) =>
-      prev.map((c) =>
-        c.id === target.id
-          ? {
-              ...c,
-              claimedCount: c.claimedCount + 1,
-              claimedUserIds: [...c.claimedUserIds, user.id],
-            }
-          : c
-      )
-    );
-
-    const ref = generateReference('TOP');
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'topup_code',
-      title: `Free Code: ${target.code}`,
-      description: target.description,
-      amountKobo: target.amountKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-    };
-    setTransactions((prev) => [tx, ...prev]);
-
-    addNotification(
-      'Top-Up Code Redeemed',
-      `Bonus ₦${(target.amountKobo / 100).toLocaleString()} credited to your balance from code ${target.code}!`
-    );
-
     return {
-      success: true,
-      message: `₦${(target.amountKobo / 100).toLocaleString()} added to your balance!`,
-      amountKobo: target.amountKobo,
+      success: Boolean(res?.success),
+      message: res?.message || res?.error || 'Unable to redeem code.',
+      amountKobo: res?.amountKobo,
     };
   };
 
-  // REAL Team & Referrals Calculation starting at 0
-  // Requirement: "I want to add remove everything in the team and also everything so it will be 0 .00 I want to make it real"
-  const realDirectDownlines = user ? allUsers.filter((u) => u.referredBy === user.referralCode) : [];
-  const referralTransactions = transactions.filter((t) => t.type === 'referral_bonus');
-  const verifiedRefRewardsKobo = referralTransactions
-    .filter((t) => t.status === 'Completed')
-    .reduce((sum, t) => sum + t.amountKobo, 0);
-
-  const referralStats = {
-    tier1: {
-      tier: 1 as const,
-      percentage: adminSettings.tier1CommissionPercent,
-      membersCount: realDirectDownlines.length,
-      earningsKobo: verifiedRefRewardsKobo,
-    },
-    tier2: {
-      tier: 2 as const,
-      percentage: adminSettings.tier2CommissionPercent,
-      membersCount: 0,
-      earningsKobo: 0,
-    },
-    tier3: {
-      tier: 3 as const,
-      percentage: adminSettings.tier3CommissionPercent,
-      membersCount: 0,
-      earningsKobo: 0,
-    },
-    totalMembers: realDirectDownlines.length,
-    pendingRewardsKobo: 0,
-    verifiedRewardsKobo: verifiedRefRewardsKobo,
-  };
-
-  // Utility Payments
-  const buyAirtime = (data: { network: string; phoneNumber: string; amountKobo: number }) => {
-    if (!user) return { success: false, error: 'Please log in.' };
-    if (availableBalanceKobo < data.amountKobo) {
-      return { success: false, error: 'Insufficient balance to purchase airtime.' };
+  // ==========================================
+  // UTILITIES
+  // ==========================================
+  const buyAirtime = async (data: { network: string; phoneNumber: string; amountKobo: number }) => {
+    const res = await apiRequest('/api/utilities/buy', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'airtime', ...data }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true, reference: res.reference };
     }
-    setAvailableBalanceKobo((prev) => prev - data.amountKobo);
-
-    const ref = generateReference('BIL');
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'airtime',
-      title: `${data.network} Airtime Recharge`,
-      description: `Airtime to ${data.phoneNumber}`,
-      amountKobo: data.amountKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-      metadata: { network: data.network, phone: data.phoneNumber },
-    };
-    setTransactions((prev) => [tx, ...prev]);
-    addNotification('Airtime Purchased', `₦${(data.amountKobo / 100).toLocaleString()} ${data.network} airtime sent to ${data.phoneNumber}.`);
-    return { success: true, reference: ref };
+    return { success: false, error: res?.error || 'Airtime purchase failed.' };
   };
 
-  const buyDataBundle = (data: {
+  const buyDataBundle = async (data: {
     network: string;
     phoneNumber: string;
     bundleName: string;
     amountKobo: number;
   }) => {
-    if (!user) return { success: false, error: 'Please log in.' };
-    if (availableBalanceKobo < data.amountKobo) {
-      return { success: false, error: 'Insufficient balance to purchase data.' };
+    const res = await apiRequest('/api/utilities/buy', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'data', ...data }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true, reference: res.reference };
     }
-    setAvailableBalanceKobo((prev) => prev - data.amountKobo);
-
-    const ref = generateReference('BIL');
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'data',
-      title: `${data.network} Data (${data.bundleName})`,
-      description: `Data subscription for ${data.phoneNumber}`,
-      amountKobo: data.amountKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-      metadata: { network: data.network, bundle: data.bundleName, phone: data.phoneNumber },
-    };
-    setTransactions((prev) => [tx, ...prev]);
-    addNotification('Data Activated', `${data.network} ${data.bundleName} bundle activated for ${data.phoneNumber}.`);
-    return { success: true, reference: ref };
+    return { success: false, error: res?.error || 'Data purchase failed.' };
   };
 
-  const payElectricityBill = (data: {
+  const payElectricityBill = async (data: {
     disco: string;
     meterNumber: string;
     meterType: 'prepaid' | 'postpaid';
     amountKobo: number;
   }) => {
-    if (!user) return { success: false, error: 'Please log in.' };
-    if (availableBalanceKobo < data.amountKobo) {
-      return { success: false, error: 'Insufficient balance to pay electricity bill.' };
+    const res = await apiRequest('/api/utilities/buy', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'electricity', ...data }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+      return { success: true, reference: res.reference, token: res.token };
     }
-    setAvailableBalanceKobo((prev) => prev - data.amountKobo);
-
-    const token = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const ref = generateReference('BIL');
-    const tx: TransactionRecord = {
-      id: `tx-${Date.now()}`,
-      reference: ref,
-      userId: user.id,
-      userEmail: user.email,
-      type: 'electricity',
-      title: `${data.disco} Electricity Bill`,
-      description: `Meter #${data.meterNumber} (${data.meterType.toUpperCase()})`,
-      amountKobo: data.amountKobo,
-      status: 'Completed',
-      date: new Date().toISOString(),
-      metadata: { disco: data.disco, meterNumber: data.meterNumber, token },
-    };
-    setTransactions((prev) => [tx, ...prev]);
-    addNotification('Electricity Bill Paid', `Token: ${token} generated for Meter ${data.meterNumber}.`);
-    return { success: true, token, reference: ref };
+    return { success: false, error: res?.error || 'Electricity payment failed.' };
   };
 
-  // Admin Actions
-  const adminApproveDeposit = (transactionId: string) => {
-    const tx = transactions.find((t) => t.id === transactionId);
-    if (!tx || tx.type !== 'deposit') return { success: false };
-
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === transactionId ? { ...t, status: 'Completed' } : t))
-    );
-
-    // Credit user's available balance
-    setAvailableBalanceKobo((prev) => prev + tx.amountKobo);
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'APPROVE_DEPOSIT',
-      target: tx.reference,
-      details: `Approved bank deposit of ₦${(tx.amountKobo / 100).toLocaleString()}`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    addNotification(
-      'Deposit Confirmed',
-      `Deposit of ₦${(tx.amountKobo / 100).toLocaleString()} (Ref: ${tx.reference}) has been confirmed and credited to balance.`,
-      'transaction',
-      tx.userId
-    );
-
-    return { success: true };
+  // ==========================================
+  // NOTIFICATIONS & LUCKY WHEEL
+  // ==========================================
+  const markNotificationAsRead = async (id: string) => {
+    const res = await apiRequest(`/api/notifications/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+    }
   };
 
-  const adminRejectDeposit = (transactionId: string, reason: string) => {
-    const tx = transactions.find((t) => t.id === transactionId);
-    if (!tx || tx.type !== 'deposit') return { success: false };
-
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === transactionId ? { ...t, status: 'Rejected' } : t))
-    );
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'REJECT_DEPOSIT',
-      target: tx.reference,
-      details: `Rejected deposit of ₦${(tx.amountKobo / 100).toLocaleString()}`,
-      reason,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    addNotification(
-      'Deposit Declined',
-      `Deposit (Ref: ${tx.reference}) was rejected. Reason: ${reason}`,
-      'system',
-      tx.userId
-    );
-    return { success: true };
+  const markAllNotificationsAsRead = async () => {
+    const res = await apiRequest('/api/notifications/read-all', {
+      method: 'POST',
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+    }
   };
 
-  const adminApproveWithdrawal = (transactionId: string) => {
-    const tx = transactions.find((t) => t.id === transactionId);
-    if (!tx || tx.type !== 'withdrawal') return { success: false };
-
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === transactionId ? { ...t, status: 'Completed' } : t))
-    );
-
-    setPendingWithdrawalKobo((prev) => Math.max(0, prev - tx.amountKobo));
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'APPROVE_WITHDRAWAL',
-      target: tx.reference,
-      details: `Approved payout of ₦${(tx.amountKobo / 100).toLocaleString()} to ${tx.bankDetails?.bankName}`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    addNotification(
-      'Withdrawal Paid',
-      `Withdrawal of ₦${(tx.amountKobo / 100).toLocaleString()} has been paid out successfully to your bank.`,
-      'transaction',
-      tx.userId
-    );
-
-    return { success: true };
+  const recordWheelSpin = async (wonPrizeTitle?: string, wonPrizeMessage?: string) => {
+    const res = await apiRequest('/api/wheel/spin', {
+      method: 'POST',
+      body: JSON.stringify({ wonPrizeTitle, wonPrizeMessage }),
+    });
+    if (res?.success && res.state) {
+      applyHydratedState(res.state);
+    }
   };
 
-  const adminRejectWithdrawal = (transactionId: string, reason: string) => {
-    const tx = transactions.find((t) => t.id === transactionId);
-    if (!tx || tx.type !== 'withdrawal') return { success: false };
-
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === transactionId ? { ...t, status: 'Rejected' } : t))
-    );
-
-    setPendingWithdrawalKobo((prev) => Math.max(0, prev - tx.amountKobo));
-    setAvailableBalanceKobo((prev) => prev + tx.amountKobo);
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'REJECT_WITHDRAWAL',
-      target: tx.reference,
-      details: `Rejected withdrawal of ₦${(tx.amountKobo / 100).toLocaleString()}. Funds restored to customer balance.`,
-      reason,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    addNotification(
-      'Withdrawal Refunded',
-      `Withdrawal (Ref: ${tx.reference}) was rejected and ₦${(tx.amountKobo / 100).toLocaleString()} returned to your balance. Reason: ${reason}`,
-      'system',
-      tx.userId
-    );
-
-    return { success: true };
+  // ==========================================
+  // SOLE ADMIN OPERATIONS
+  // ==========================================
+  const updateAdminSettings = async (updates: Partial<AdminSettings>) => {
+    const res = await apiRequest('/api/admin/settings', {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+    }
   };
 
-  const adminUpdatePlan = (planId: string, updates: Partial<InvestmentPlan>) => {
-    setPlans((prev) =>
-      prev.map((p) => (p.id === planId ? { ...p, ...updates } : p))
-    );
+  const adminApproveDeposit = async (transactionId: string) => {
+    const res = await apiRequest(`/api/admin/deposits/${encodeURIComponent(transactionId)}/approve`, {
+      method: 'POST',
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to approve deposit.' };
   };
 
-  const adminCreateTopUpCode = (data: {
+  const adminRejectDeposit = async (transactionId: string, reason: string) => {
+    const res = await apiRequest(`/api/admin/deposits/${encodeURIComponent(transactionId)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to reject deposit.' };
+  };
+
+  const adminApproveWithdrawal = async (transactionId: string) => {
+    const res = await apiRequest(`/api/admin/withdrawals/${encodeURIComponent(transactionId)}/approve`, {
+      method: 'POST',
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to approve withdrawal.' };
+  };
+
+  const adminRejectWithdrawal = async (transactionId: string, reason: string) => {
+    const res = await apiRequest(`/api/admin/withdrawals/${encodeURIComponent(transactionId)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to reject withdrawal.' };
+  };
+
+  const adminUpdatePlan = async (planId: string, updates: Partial<InvestmentPlan>) => {
+    const res = await apiRequest(`/api/admin/plans/${encodeURIComponent(planId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+    }
+  };
+
+  const adminCreateTopUpCode = async (data: {
     code: string;
     amountKobo: number;
     totalLimit: number;
     expiryDate: string;
     description: string;
   }) => {
-    const cleanCode = data.code.trim().toUpperCase();
-    if (topUpCodes.some((c) => c.code.toUpperCase() === cleanCode)) {
-      return { success: false, error: 'A code with this exact text already exists.' };
+    const res = await apiRequest('/api/admin/codes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
     }
-
-    const newCode: TopUpCode = {
-      id: `top-${Date.now()}`,
-      code: cleanCode,
-      amountKobo: data.amountKobo,
-      totalLimit: data.totalLimit,
-      claimedCount: 0,
-      claimedUserIds: [],
-      expiryDate: data.expiryDate,
-      description: data.description,
-      status: 'active',
-    };
-
-    setTopUpCodes((prev) => [newCode, ...prev]);
-    return { success: true };
+    return { success: false, error: res?.error || 'Failed to create promo code.' };
   };
 
-  const updateAdminSettings = (updates: Partial<AdminSettings>) => {
-    setAdminSettings((prev) => ({ ...prev, ...updates }));
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'UPDATE_SYSTEM_SETTINGS',
-      target: 'System Config',
-      details: `Updated settings: ${JSON.stringify(updates)}`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-  };
-
-  const adminToggleUserVerification = (userId: string) => {
-    setAllUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, isVerified: !u.isVerified } : u))
-    );
-    if (user && user.id === userId) {
-      setUser((prev) => (prev ? { ...prev, isVerified: !prev.isVerified } : null));
-    }
-  };
-
-  const adminUpdateUserFinancials = (
+  const adminUpdateUserFinancials = async (
     userId: string,
     updates: {
       balanceKobo?: number;
@@ -1486,145 +874,75 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       role?: UserRole;
     }
   ) => {
-    setAllUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === userId) {
-          return {
-            ...u,
-            ...updates,
-            balanceKobo: updates.balanceKobo !== undefined ? updates.balanceKobo : u.balanceKobo,
-            investedBalanceKobo: updates.investedCapitalKobo !== undefined ? updates.investedCapitalKobo : u.investedBalanceKobo,
-            totalEarnedKobo: updates.totalEarnedKobo !== undefined ? updates.totalEarnedKobo : u.totalEarnedKobo,
-            vipLevel: updates.vipLevel !== undefined ? updates.vipLevel : u.vipLevel,
-            spinBalance: updates.spinBalance !== undefined ? updates.spinBalance : u.spinBalance,
-            isWithdrawalBanned: updates.isWithdrawalBanned !== undefined ? updates.isWithdrawalBanned : u.isWithdrawalBanned,
-            isSuspended: updates.isSuspended !== undefined ? updates.isSuspended : u.isSuspended,
-          };
-        }
-        return u;
-      })
-    );
-
-    // If currently logged-in user is updated, update live state too
-    if (user && user.id === userId) {
-      setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              ...updates,
-              spinBalance: updates.spinBalance !== undefined ? updates.spinBalance : prev.spinBalance,
-              investedBalanceKobo:
-                updates.investedCapitalKobo !== undefined
-                  ? updates.investedCapitalKobo
-                  : prev.investedBalanceKobo,
-              totalEarnedKobo:
-                updates.totalEarnedKobo !== undefined
-                  ? updates.totalEarnedKobo
-                  : prev.totalEarnedKobo,
-            }
-          : null
-      );
-      if (updates.balanceKobo !== undefined) setAvailableBalanceKobo(updates.balanceKobo);
+    const res = await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
     }
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'UPDATE_USER_FINANCIALS',
-      target: userId,
-      details: `Admin updated balance/capital/VIP: ${JSON.stringify(updates)}`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    return { success: true };
+    return { success: false, error: res?.error || 'Failed to update user.' };
   };
 
-  const adminDeleteUserInvestments = (userId: string) => {
-    setUserInvestments((prev) => prev.filter((inv) => inv.userId !== userId));
-    setAllUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, investedBalanceKobo: 0 } : u))
-    );
-    if (user && user.id === userId) {
-      setUser((prev) => (prev ? { ...prev, investedBalanceKobo: 0 } : null));
-    }
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'DELETE_USER_INVESTMENTS',
-      target: userId,
-      details: `Admin deleted all active investments for user ${userId}`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-    return { success: true };
+  const adminToggleUserVerification = async (userId: string) => {
+    const target = allUsers.find((u) => u.id === userId);
+    if (!target) return;
+    await adminUpdateUserFinancials(userId, { isVerified: !target.isVerified } as any);
   };
 
-  const adminDeleteUser = (userId: string) => {
-    setAllUsers((prev) => prev.filter((u) => u.id !== userId));
-    setUserInvestments((prev) => prev.filter((inv) => inv.userId !== userId));
-    setTransactions((prev) => prev.filter((tx) => tx.userId !== userId));
-    setBankAccounts((prev) => prev.filter((b) => b.userId !== userId));
-
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'DELETE_USER_PERMANENTLY',
-      target: userId,
-      details: `User ${userId} deleted permanently from the platform ledger.`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-
-    // If deleting current user, logout
-    if (user && user.id === userId) {
-      logout();
-    }
-    return { success: true };
+  const adminToggleUserWithdrawalBan = async (userId: string) => {
+    const target = allUsers.find((u) => u.id === userId);
+    if (!target) return { success: false, error: 'User not found.' };
+    return adminUpdateUserFinancials(userId, { isWithdrawalBanned: !target.isWithdrawalBanned });
   };
 
-  const adminToggleUserWithdrawalBan = (userId: string) => {
-    let nextState = false;
-    setAllUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === userId) {
-          nextState = !u.isWithdrawalBanned;
-          return { ...u, isWithdrawalBanned: nextState };
-        }
-        return u;
-      })
-    );
-    if (user && user.id === userId) {
-      setUser((prev) => (prev ? { ...prev, isWithdrawalBanned: !prev.isWithdrawalBanned } : null));
-    }
-    return { success: true };
+  const adminToggleUserSuspension = async (userId: string) => {
+    const target = allUsers.find((u) => u.id === userId);
+    if (!target) return { success: false, error: 'User not found.' };
+    return adminUpdateUserFinancials(userId, { isSuspended: !target.isSuspended });
   };
 
-  const adminToggleUserSuspension = (userId: string) => {
-    setAllUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, isSuspended: !u.isSuspended } : u))
-    );
-    if (user && user.id === userId) {
-      setUser((prev) => (prev ? { ...prev, isSuspended: !prev.isSuspended } : null));
+  const adminDeleteUserInvestments = async (userId: string) => {
+    const res = await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}/investments`, {
+      method: 'DELETE',
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
     }
-    return { success: true };
+    return { success: false, error: res?.error || 'Failed to delete user investments.' };
   };
 
-  const adminPublishNotification = (title: string, message: string, type: NotificationItem['type'] = 'system') => {
-    addNotification(title, message, type);
-    const audit: AuditLogItem = {
-      id: `aud-${Date.now()}`,
-      adminId: user?.id || 'admin',
-      adminEmail: user?.email || 'emmanuelchidalu67@gmail.com',
-      action: 'PUBLISH_BROADCAST',
-      target: 'All Investors',
-      details: `Broadcast: "${title}"`,
-      timestamp: new Date().toISOString(),
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
+  const adminDeleteUser = async (userId: string) => {
+    const res = await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to delete user.' };
+  };
+
+  const adminPublishNotification = async (
+    title: string,
+    message: string,
+    type: NotificationItem['type'] = 'system'
+  ) => {
+    const res = await apiRequest('/api/admin/broadcast', {
+      method: 'POST',
+      body: JSON.stringify({ title, message, type }),
+    });
+    if (res?.success) {
+      if (res.state) applyHydratedState(res.state);
+      if (res.adminData) applyAdminDashboardData(res.adminData);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to publish broadcast.' };
   };
 
   return (
@@ -1632,6 +950,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       value={{
         user,
         allUsers,
+        downlines,
+        downlineMaxInvestKobo,
         isAuthenticated: !!user,
         activeTab,
         setActiveTab,
@@ -1641,53 +961,53 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setShowSplash,
         login,
         signup,
-        verifyOtp,
         logout,
         updateProfile,
         updateWithdrawalPin,
+        updatePassword,
         showCommunityModal,
         setShowCommunityModal,
-
+        refreshState,
+        refreshAdminDashboard,
         availableBalanceKobo,
         investedCapitalKobo,
         verifiedEarningsKobo,
         pendingWithdrawalKobo,
-
+        liveAccruingKobo,
+        totalLiveProfitKobo,
+        perSecondYieldKobo,
         plans,
         userInvestments,
         investInPlan,
-        claimInvestmentYield,
-
         celebrationData,
         dismissCelebration,
-
         transactions,
+        publicFeedWithdrawals,
         submitDeposit,
         submitWithdrawal,
-
         bankAccounts,
         addBankAccount,
         deleteBankAccount,
         setDefaultBankAccount,
-
         topUpCodes,
         redeemTopUpCode,
-
         referralStats,
-
         buyAirtime,
         buyDataBundle,
         payElectricityBill,
-
-        notifications: userNotifications,
+        notifications,
         unreadNotificationCount,
         markNotificationAsRead,
         markAllNotificationsAsRead,
-        addNotification,
-
+        recordWheelSpin,
         adminSettings,
-        updateAdminSettings,
+        adminTransactions,
+        adminInvestments,
+        adminBankAccounts,
+        adminTopUpCodes,
+        adminStats,
         auditLogs,
+        updateAdminSettings,
         adminApproveDeposit,
         adminRejectDeposit,
         adminApproveWithdrawal,

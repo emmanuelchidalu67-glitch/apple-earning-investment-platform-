@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, formatUsd, maskPhone, formatDate, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
+import { formatNaira, formatUsd, formatUsdPrecise, maskPhone, formatDate, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 import { DualCurrency } from './DualCurrency';
 import {
   Wallet,
@@ -57,11 +57,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     user,
     availableBalanceKobo,
     investedCapitalKobo,
-    verifiedEarningsKobo,
+    totalLiveProfitKobo,
+    perSecondYieldKobo,
     pendingWithdrawalKobo,
+    downlineMaxInvestKobo,
     plans,
     transactions,
-    allUsers,
     adminSettings,
     setActiveTab,
   } = useApp();
@@ -70,24 +71,16 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const [showHomeTermsModal, setShowHomeTermsModal] = useState(false);
   const [showHomePrivacyModal, setShowHomePrivacyModal] = useState(false);
 
+  const exchangeRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
+
   // Lucky Wheel Eligibility Tracking:
   // "every user has no right to spin until they invite friends and the friend purchase a 200,000 invest or the user person purchase 500,000 invest to be eligible"
   const minFriendInvestKobo = adminSettings.wheelMinFriendInvestKobo || 200000 * 100;
   const minUserInvestKobo = adminSettings.wheelMinUserInvestKobo || 500000 * 100;
+  const userSpinTickets = user?.spinBalance || 0;
   const userQualified = investedCapitalKobo >= minUserInvestKobo;
-  const userReferralCode = user?.referralCode || '';
-  const myDownlines = allUsers.filter((u) => u.referredBy === userReferralCode);
-  const myDownlineIds = myDownlines.map((d) => d.id);
-  const downlineMaxInvestKobo = transactions
-    .filter(
-      (t) =>
-        myDownlineIds.includes(t.userId) &&
-        t.type === 'investment' &&
-        t.status === 'Completed'
-    )
-    .reduce((max, t) => Math.max(max, t.amountKobo), 0);
   const downlineQualified = downlineMaxInvestKobo >= minFriendInvestKobo;
-  const isWheelEligible = userQualified || downlineQualified;
+  const isWheelEligible = userSpinTickets > 0 || userQualified || downlineQualified;
 
   // 3 Featured plans (e.g. VIP 1, VIP 3, VIP 6)
   const featuredPlans = plans.filter((p) => [1, 3, 6].includes(p.vipTier));
@@ -137,38 +130,46 @@ export const HomeTab: React.FC<HomeTabProps> = ({
 
         {/* Big Balance Display (USD Primary with Naira Conversion Below) */}
         <div className="my-2 space-y-0.5">
-          <h2 className="text-3xl font-black font-mono tracking-tight text-white drop-shadow-[0_2px_10px_rgba(255,255,255,0.15)]">
-            {showBalance ? formatUsd(availableBalanceKobo, true, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••••••'}
-          </h2>
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <h2 className="text-3xl font-black font-mono tracking-tight text-white drop-shadow-[0_2px_10px_rgba(255,255,255,0.15)]">
+              {showBalance ? formatUsd(availableBalanceKobo, true, exchangeRate) : '••••••••'}
+            </h2>
+            {showBalance && perSecondYieldKobo > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-[10px] font-mono font-bold text-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>+{formatUsdPrecise(perSecondYieldKobo, 5, exchangeRate)}/s</span>
+              </span>
+            )}
+          </div>
           <p className="text-xs font-mono font-bold text-sky-300/90">
             {showBalance ? `≈ ${formatNaira(availableBalanceKobo)}` : '••••••••'}
           </p>
         </div>
 
-        {/* Three Sub-metrics: Invested Capital | Verified Earnings | Pending Withdrawal */}
+        {/* Three Sub-metrics: Invested Capital | Live Total Profit | Pending Withdrawal */}
         <div className="grid grid-cols-3 gap-2 pt-3 mt-2 border-t border-white/10 text-left">
           <div>
             <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Invested</p>
             <p className="text-xs font-bold font-mono text-sky-300 mt-0.5">
-              {showBalance ? formatUsd(investedCapitalKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+              {showBalance ? formatUsd(investedCapitalKobo, false, exchangeRate) : '••••'}
             </p>
             <p className="text-[10px] font-mono text-slate-400">
               {showBalance ? `≈ ${formatNaira(investedCapitalKobo, false)}` : '••••'}
             </p>
           </div>
           <div>
-            <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Verified Profit</p>
+            <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Live Profit</p>
             <p className="text-xs font-bold font-mono text-emerald-400 mt-0.5">
-              {showBalance ? formatUsd(verifiedEarningsKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+              {showBalance ? formatUsdPrecise(totalLiveProfitKobo, perSecondYieldKobo > 0 ? 4 : 2, exchangeRate) : '••••'}
             </p>
             <p className="text-[10px] font-mono text-slate-400">
-              {showBalance ? `≈ ${formatNaira(verifiedEarningsKobo, false)}` : '••••'}
+              {showBalance ? `≈ ${formatNaira(Math.round(totalLiveProfitKobo), false)}` : '••••'}
             </p>
           </div>
           <div>
             <p className="text-[10px] text-slate-300/80 uppercase font-semibold">Pending Wth</p>
             <p className="text-xs font-bold font-mono text-pink-400 mt-0.5">
-              {showBalance ? formatUsd(pendingWithdrawalKobo, false, adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE) : '••••'}
+              {showBalance ? formatUsd(pendingWithdrawalKobo, false, exchangeRate) : '••••'}
             </p>
             <p className="text-[10px] font-mono text-slate-400">
               {showBalance ? `≈ ${formatNaira(pendingWithdrawalKobo, false)}` : '••••'}
@@ -341,7 +342,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               ) : (
                 <span>
                   <strong className="text-amber-300">Spin Locked: </strong>
-                  Requires personal investment of <strong>$322.58</strong> (≈ ₦500,000) OR 1 friend investment of <strong>$129.03</strong> (≈ ₦200,000).
+                  Requires personal investment of <strong>{formatUsd(minUserInvestKobo, true, exchangeRate)}</strong> (≈ {formatNaira(minUserInvestKobo, false)}) OR 1 friend investment of <strong>{formatUsd(minFriendInvestKobo, true, exchangeRate)}</strong> (≈ {formatNaira(minFriendInvestKobo, false)}).
                 </span>
               )}
             </div>

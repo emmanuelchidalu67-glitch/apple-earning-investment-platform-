@@ -43,6 +43,7 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
   const [bep20Label, setBep20Label] = useState('');
 
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   if (!isOpen) return null;
 
@@ -51,8 +52,9 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
     b.name.toLowerCase().includes(bankSearch.toLowerCase())
   );
 
-  const handleSaveAccount = (e: React.FormEvent) => {
+  const handleSaveAccount = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
     setFormError(null);
 
     if (accountType === 'bank') {
@@ -66,21 +68,26 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
         return;
       }
 
-      const res = addBankAccount({
-        type: 'bank',
-        bankName: selectedBank.name,
-        bankCode: selectedBank.code,
-        accountNumber: cleanNum,
-        accountName: accountName.trim().toUpperCase(),
-      });
+      setIsSaving(true);
+      try {
+        const res = await addBankAccount({
+          type: 'bank',
+          bankName: selectedBank.name,
+          bankCode: selectedBank.code,
+          accountNumber: cleanNum,
+          accountName: accountName.trim().toUpperCase(),
+        });
 
-      if (res.success) {
-        setIsAddingNew(false);
-        setAccountNumber('');
-        setAccountName('');
-        setFormError(null);
-      } else {
-        setFormError(res.error || 'Failed to save bank account.');
+        if (res.success) {
+          setIsAddingNew(false);
+          setAccountNumber('');
+          setAccountName('');
+          setFormError(null);
+        } else {
+          setFormError(res.error || 'Failed to save bank account.');
+        }
+      } finally {
+        setIsSaving(false);
       }
     } else {
       const cleanAddr = bep20Address.trim();
@@ -93,23 +100,28 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
         return;
       }
 
-      const res = addBankAccount({
-        type: 'bep20',
-        bankName: 'USDT (BNB Smart Chain BEP-20)',
-        bankCode: 'BEP20',
-        accountNumber: cleanAddr,
-        accountName: bep20Label.trim(),
-        bep20Address: cleanAddr,
-        network: 'BNB Smart Chain (BEP-20)',
-      });
+      setIsSaving(true);
+      try {
+        const res = await addBankAccount({
+          type: 'bep20',
+          bankName: 'USDT (BNB Smart Chain BEP-20)',
+          bankCode: 'BEP20',
+          accountNumber: cleanAddr,
+          accountName: bep20Label.trim(),
+          bep20Address: cleanAddr,
+          network: 'BNB Smart Chain (BEP-20)',
+        });
 
-      if (res.success) {
-        setIsAddingNew(false);
-        setBep20Address('');
-        setBep20Label('');
-        setFormError(null);
-      } else {
-        setFormError(res.error || 'Failed to save BEP-20 address.');
+        if (res.success) {
+          setIsAddingNew(false);
+          setBep20Address('');
+          setBep20Label('');
+          setFormError(null);
+        } else {
+          setFormError(res.error || 'Failed to save BEP-20 address.');
+        }
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -257,7 +269,7 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
                           ) : (
                             <button
                               type="button"
-                              onClick={() => setDefaultBankAccount(account.id)}
+                              onClick={() => void setDefaultBankAccount(account.id)}
                               className="text-[9px] font-semibold text-slate-300 hover:text-white underline cursor-pointer"
                             >
                               Make Primary
@@ -267,7 +279,7 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
                           {/* Delete Card Button */}
                           <button
                             type="button"
-                            onClick={() => deleteBankAccount(account.id)}
+                            onClick={() => void deleteBankAccount(account.id)}
                             title="Remove card"
                             className="p-1 rounded-lg bg-red-600/20 text-red-300 hover:bg-red-600/40 border border-red-500/30 transition cursor-pointer"
                           >
@@ -466,13 +478,14 @@ export const BankAccountsModal: React.FC<BankAccountsModalProps> = ({
               </button>
               <button
                 type="submit"
-                className={`w-2/3 py-3 rounded-2xl font-bold text-xs uppercase tracking-wider text-white shadow-lg transition cursor-pointer ${
+                disabled={isSaving}
+                className={`w-2/3 py-3 rounded-2xl font-bold text-xs uppercase tracking-wider text-white shadow-lg transition cursor-pointer disabled:opacity-60 ${
                   accountType === 'bank'
                     ? 'bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500'
                     : 'bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500'
                 }`}
               >
-                Save Payout Debit Card
+                {isSaving ? 'Saving...' : 'Save Payout Debit Card'}
               </button>
             </div>
           </form>

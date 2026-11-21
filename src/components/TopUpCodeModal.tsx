@@ -19,9 +19,10 @@ interface TopUpCodeModalProps {
 }
 
 export const TopUpCodeModal: React.FC<TopUpCodeModalProps> = ({ isOpen, onClose }) => {
-  const { topUpCodes, redeemTopUpCode, transactions, user } = useApp();
+  const { redeemTopUpCode, transactions, adminSettings } = useApp();
 
   const [inputCode, setInputCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [resultMessage, setResultMessage] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -29,16 +30,23 @@ export const TopUpCodeModal: React.FC<TopUpCodeModalProps> = ({ isOpen, onClose 
 
   if (!isOpen) return null;
 
-  const handleRedeem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputCode.trim()) return;
+  const rate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
 
-    const res = redeemTopUpCode(inputCode);
-    if (res.success) {
-      setResultMessage({ type: 'success', text: res.message });
-      setInputCode('');
-    } else {
-      setResultMessage({ type: 'error', text: res.message });
+  const handleRedeem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputCode.trim() || isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await redeemTopUpCode(inputCode);
+      if (res.success) {
+        setResultMessage({ type: 'success', text: res.message });
+        setInputCode('');
+      } else {
+        setResultMessage({ type: 'error', text: res.message });
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -100,9 +108,10 @@ export const TopUpCodeModal: React.FC<TopUpCodeModalProps> = ({ isOpen, onClose 
 
             <button
               type="submit"
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-pink-600 hover:from-sky-400 hover:to-pink-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-sky-500/20 cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-pink-600 hover:from-sky-400 hover:to-pink-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-sky-500/20 cursor-pointer disabled:opacity-60"
             >
-              Redeem Code Now
+              {isSubmitting ? 'Redeeming...' : 'Redeem Code Now'}
             </button>
           </form>
 
@@ -133,6 +142,7 @@ export const TopUpCodeModal: React.FC<TopUpCodeModalProps> = ({ isOpen, onClose 
                     </div>
                     <DualCurrency
                       kobo={item.amountKobo}
+                      rate={rate}
                       prefix="+"
                       align="right"
                       usdClassName="font-mono font-bold text-emerald-400 text-xs"

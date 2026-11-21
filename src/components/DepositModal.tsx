@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatNaira, nairaToKobo } from '../utils/formatters';
+import { formatNaira, formatUsd, nairaToKobo, DEFAULT_USD_EXCHANGE_RATE } from '../utils/formatters';
 import {
   X,
   Wallet,
@@ -37,6 +37,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
   const [copiedRef, setCopiedRef] = useState(false);
   const [confirmedReference, setConfirmedReference] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -45,7 +46,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
   const quickAmounts = [3000, 5000, 6000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000];
 
   const parsedAmount = Number(depositAmount) || 0;
-  const usdtRate = adminSettings.usdtExchangeRateNaira || 1550;
+  const usdtRate = adminSettings.usdtExchangeRateNaira || DEFAULT_USD_EXCHANGE_RATE;
   const calculatedUsdt = (parsedAmount / usdtRate).toFixed(2);
   const bep20Address = adminSettings.usdtBep20Address || '0x71C8F8b2B7A8c2b535B48B96602e1c942FdB7a61';
 
@@ -58,11 +59,11 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
 
   const handleProceedToStep2 = () => {
     if (parsedAmount < 1000) {
-      setErrorMessage('Minimum deposit amount is ₦1,000.');
+      setErrorMessage(`Minimum deposit amount is ${formatUsd(100000, true, usdtRate)} (≈ ₦1,000).`);
       return;
     }
     if (parsedAmount > 10000000) {
-      setErrorMessage('Maximum single deposit is ₦10,000,000.');
+      setErrorMessage(`Maximum single deposit is ${formatUsd(1000000000, false, usdtRate)} (≈ ₦10,000,000).`);
       return;
     }
     setErrorMessage(null);
@@ -74,7 +75,8 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
     setStep(2);
   };
 
-  const handleConfirmPayment = () => {
+  const handleConfirmPayment = async () => {
+    if (isSubmitting) return;
     if (channelType === 'bank') {
       if (!senderName.trim()) {
         setErrorMessage('Please provide the Sender / Depositor Account Name for reconciliation.');
@@ -87,15 +89,26 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
       }
     }
 
-    const res = submitDeposit({
-      amountKobo: nairaToKobo(parsedAmount),
-      senderName: channelType === 'bank' ? senderName.trim() : `USDT BEP-20 Depositor (${calculatedUsdt} USDT)`,
-      senderReference: channelType === 'bank' ? senderReference.trim() || undefined : usdtTxHash.trim(),
-      paymentMethod: channelType === 'bank' ? paymentMethod : 'USDT (BEP-20)',
-    });
+    setErrorMessage(null);
+    setIsSubmitting(true);
+    try {
+      const res = await submitDeposit({
+        amountKobo: nairaToKobo(parsedAmount),
+        senderName: channelType === 'bank' ? senderName.trim() : `USDT BEP-20 Depositor (${calculatedUsdt} USDT)`,
+        senderReference: channelType === 'bank' ? senderReference.trim() || undefined : usdtTxHash.trim(),
+        paymentMethod: channelType === 'bank' ? paymentMethod : 'USDT (BEP-20)',
+      });
 
-    setConfirmedReference(res.reference);
-    setStep(3);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to submit deposit request.');
+        return;
+      }
+
+      setConfirmedReference(res.reference);
+      setStep(3);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const copyToClipboard = (text: string, type: 'account' | 'usdt' | 'ref') => {
@@ -224,9 +237,14 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Deposit Amount (NGN)
-              </label>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-semibold text-slate-300">
+                  Deposit Amount (NGN)
+                </label>
+                <span className="text-xs font-mono font-bold text-emerald-400">
+                  ${calculatedUsdt} USD
+                </span>
+              </div>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-sky-400">
                   ₦
@@ -240,12 +258,10 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1">
-                Min: ₦1,000 • Max: ₦10,000,000
-                {channelType === 'usdt' && (
-                  <span className="text-emerald-400 font-bold ml-1">
-                    ≈ {calculatedUsdt} USDT (1 USDT = ₦{usdtRate.toLocaleString()})
-                  </span>
-                )}
+                Min: {formatUsd(100000, true, usdtRate)} (≈ ₦1,000) • Max: {formatUsd(1000000000, false, usdtRate)} (≈ ₦10M)
+              </p>
+              <p className="text-[11px] text-emerald-400 font-bold mt-0.5">
+                Equivalent: ${calculatedUsdt} USD / USDT (Rate: ₦{usdtRate.toLocaleString()} / $1)
               </p>
             </div>
 
@@ -438,10 +454,11 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose }) =
               </button>
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={handleConfirmPayment}
-                className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-sky-600 hover:from-emerald-400 hover:to-sky-500 text-white text-xs font-bold uppercase tracking-wider shadow-lg shadow-emerald-500/20 cursor-pointer"
+                className="w-2/3 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-sky-600 hover:from-emerald-400 hover:to-sky-500 text-white text-xs font-bold uppercase tracking-wider shadow-lg shadow-emerald-500/20 cursor-pointer disabled:opacity-60"
               >
-                I Have Sent Payment
+                {isSubmitting ? 'Submitting...' : 'I Have Sent Payment'}
               </button>
             </div>
           </div>
